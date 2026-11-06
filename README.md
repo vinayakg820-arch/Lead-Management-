@@ -50,3 +50,16 @@ Upload `web/index.html` to your EdgeOne Pages project (replace the old file), th
 
 - The APK signing key is NOT in this repository. It is stored as the `KEYSTORE_BASE64` GitHub secret. Never commit a `.jks` file here (the repository is public).
 - The Supabase key in `index.html` is the public anon key; data is protected by Row Level Security.
+
+## 5. In-app updates (v1.0.5 पासून)
+
+- GitHub वर नवीन version तयार झाला की app मध्ये **"New Update Available"** pop-up येतो → **Update Now** → update होऊन **Congratulations** message येतो.
+- **Android app:** फक्त web app बदलला असेल तर काही सेकंदात update होतो (reinstall नाही). Java/Manifest बदलला असेल तर `MainActivity.java` मधील `NATIVE_VERSION` 1 ने वाढवा; मग app नवीन APK download करून Install विचारतो.
+- **Browser (EdgeOne):** नवीन `LeadMaster-EdgeOne-v….zip` EdgeOne वर deploy केल्यानंतरच browser users ना pop-up दिसतो.
+- Commit message चा मजकूर "What's new" मध्ये दिसतो.
+
+## 6. Lead notifications
+
+- Admin ने lead assign/edit केला की त्या user ला pop notification (आवाजासह) येते; user ने lead बदलला/जोडला की admin ला येते.
+- App background मध्ये असताना Android notification / browser notification येते (पहिल्यांदा permission Allow करा).
+- App पूर्ण बंद असताना notification येत नाही (त्यासाठी Firebase push लागेल).

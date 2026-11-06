@@ -59,7 +59,26 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk "LeadMaster-v$VERSION.apk"
           (cd web && zip -q "../LeadMaster-EdgeOne-v$VERSION.zip" index.html)
-          ls -la LeadMaster-*
+          cp web/index.html index.html
+          NATIVE=$(grep -oP 'NATIVE_VERSION = \K[0-9]+' android/app/src/main/java/com/nexgen/leadmaster/MainActivity.java)
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
+          CLEAN=$(printf '%s\n' "$NOTES" | grep -v -E '^(Co-Authored-By|Claude-Session|Signed-off-by):' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+          {
+            echo "**Version $VERSION**"
+            echo
+            echo "- \`LeadMaster-v$VERSION.apk\` → install on Android phones (updates the old app)"
+            echo "- \`LeadMaster-EdgeOne-v$VERSION.zip\` → upload to EdgeOne Pages (New Deployment)"
+            echo
+            echo "Change:"
+            echo "$CLEAN"
+          } > release-notes.md
+          jq -n --arg v "$VERSION" --argjson n "$NATIVE" --arg web "$BASE/index.html" \
+                --arg apk "$BASE/LeadMaster-v$VERSION.apk" --arg notes "$CLEAN" \
+                '{version: $v, nativeVersion: $n, web: $web, apk: $apk, notes: $notes}' > update.json
+          cat update.json
+          ls -la LeadMaster-* index.html update.json
+        env:
+          NOTES: ${{ github.event.head_commit.message }}
 
       - name: Upload files (Actions artifact)
         uses: actions/upload-artifact@v4
@@ -74,13 +93,9 @@ jobs:
         with:
           tag_name: v${{ env.VERSION }}
           name: LeadMaster v${{ env.VERSION }}
-          body: |
-            **Version ${{ env.VERSION }}**
-
-            - `LeadMaster-v${{ env.VERSION }}.apk` → install on Android phones (updates the old app)
-            - `LeadMaster-EdgeOne-v${{ env.VERSION }}.zip` → upload to EdgeOne Pages (New Deployment)
-
-            Change: ${{ github.event.head_commit.message }}
+          body_path: release-notes.md
           files: |
             LeadMaster-v${{ env.VERSION }}.apk
             LeadMaster-EdgeOne-v${{ env.VERSION }}.zip
+            index.html
+            update.json
