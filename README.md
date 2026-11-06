@@ -22,7 +22,10 @@ Upload `web/index.html` to your EdgeOne Pages project (replace the old file), th
    - Value: `KEYSTORE_BASE64.txt` मधील पूर्ण मजकूर (ही file GitHub वर upload करू नका).
    यामुळे प्रत्येक नवीन APK जुन्या app वर update म्हणून install होईल.
 2. **Actions** tab → "Build Android APK" → **Run workflow** (किंवा कोणताही commit). सुमारे 5–8 मिनिटे.
-3. **Releases** मध्ये `LeadMaster.apk` download करा.
+3. **Releases** मध्ये प्रत्येक version साठी दोन files मिळतात:
+   - `LeadMaster-v1.0.X.apk` → Android phone वर install (जुन्या app वर update होतो)
+   - `LeadMaster-EdgeOne-v1.0.X.zip` → EdgeOne Pages वर upload (New Deployment)
+   App च्या login page आणि menu च्या खाली **Version 1.0.X** दिसतो, त्यावरून कोणता version चालू आहे ते कळते.
 
 प्रत्येक वेळी तुम्ही `web/index.html` बदलून commit कराल, तेव्हा नवीन APK आपोआप तयार होईल.
 

@@ -172,6 +172,8 @@
       { id: 2, name: 'Priya Singh', phone: '+91 8765432109', enquiryDate: '2023-10-26', category: 'Facebook Ad', product: 'Web Design', reference: 'Word of Mouth', callStatus: 'Pending', expectedBuyDate: '', visitedStatus: 'Not Visited', buyingConfirmation: 'Pending', buyingWhen: '', notBuyingReason: '', conversionStatus: 'In Progress', assignedTo: null },
       { id: 3, name: 'Amit Patel', phone: '+91 7654321098', enquiryDate: '2023-10-27', category: 'Organic WhatsApp', product: 'Consulting', reference: 'Justdial', callStatus: 'Made Call', expectedBuyDate: '', visitedStatus: 'Not Visited', buyingConfirmation: 'No', buyingWhen: '', notBuyingReason: 'Price too high', conversionStatus: 'Not Converted', assignedTo: null },
     ];
+    // Filled in by the GitHub build (e.g. 1.0.4); shows 'dev' in the repository copy
+    const APP_VERSION = '__APP_VERSION__'.indexOf('__') === 0 ? 'dev' : '__APP_VERSION__';
     // ---------- Supabase ----------
     const sb = supabase.createClient('https://cssswtyzfmfoijcjgxpe.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzc3N3dHl6Zm1mb2lqY2pneHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3MzI1MjUsImV4cCI6MjEwODMwODUyNX0.Em-aabrMfICAsYMfGf719hN0eXMsxt2CGcAkfi4Fe98');
     const toEmail = (id) => { const v = String(id).trim().toLowerCase(); return v.includes('@') ? v : v + '@leadmaster.app'; };
@@ -478,6 +480,7 @@
           <div className="mt-8 text-center animate-slide-up" style={{ animationDelay: '0.2s' }}>
             <p className="text-sm font-medium text-slate-500">Powered By <span className="text-indigo-600 font-bold tracking-wide">NexGen Softwares</span></p>
             <p className="text-xs text-slate-400 mt-1.5 font-medium">Vinayak Gosavi - 9156103714</p>
+            <p className="text-[11px] text-slate-400 mt-1">Version {APP_VERSION}</p>
           </div>
         </div>
       );
@@ -2071,7 +2074,7 @@
               {isAdmin && <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl transition-all duration-200"><Settings className="w-5 h-5 mr-3" /><span className="font-medium">Settings</span></button>}
               <button onClick={handleLogout} className="w-full flex items-center px-4 py-3 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-xl transition-all duration-200"><LogOut className="w-5 h-5 mr-3" /><span className="font-medium">Log Out</span></button>
             </div>
-            <div className="p-4 bg-slate-950/50 text-center text-xs border-t border-slate-800/60 pb-6 md:pb-4"><p className="text-slate-400">Powered By <span className="text-indigo-400 font-semibold">NexGen Softwares</span></p><p className="text-slate-500 mt-1">Vinayak Gosavi - <a href="tel:9156103714" className="hover:text-indigo-300 transition-colors">9156103714</a></p></div>
+            <div className="p-4 bg-slate-950/50 text-center text-xs border-t border-slate-800/60 pb-6 md:pb-4"><p className="text-slate-400">Powered By <span className="text-indigo-400 font-semibold">NexGen Softwares</span></p><p className="text-slate-500 mt-1">Vinayak Gosavi - <a href="tel:9156103714" className="hover:text-indigo-300 transition-colors">9156103714</a></p><p className="text-slate-600 mt-1">Version {APP_VERSION}</p></div>
           </div>
 
           {}

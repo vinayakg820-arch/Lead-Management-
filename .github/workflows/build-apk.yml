@@ -21,6 +21,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set version
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/__APP_VERSION__/$VERSION/g" web/index.html
+          grep -q "'$VERSION'" web/index.html && echo "App version: $VERSION"
+
       - name: Prepare preinstalled Android SDK
         run: |
           echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -48,19 +55,32 @@ jobs:
         working-directory: android
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk LeadMaster.apk
+      - name: Package APK and EdgeOne ZIP
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "LeadMaster-v$VERSION.apk"
+          (cd web && zip -q "../LeadMaster-EdgeOne-v$VERSION.zip" index.html)
+          ls -la LeadMaster-*
 
-      - name: Upload APK (Actions artifact)
+      - name: Upload files (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: LeadMaster-APK
-          path: LeadMaster.apk
+          name: LeadMaster-v${{ env.VERSION }}
+          path: |
+            LeadMaster-v${{ env.VERSION }}.apk
+            LeadMaster-EdgeOne-v${{ env.VERSION }}.zip
 
-      - name: Publish GitHub Release with the APK
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: LeadMaster v1.0.${{ github.run_number }}
-          body: Android APK built from commit ${{ github.sha }}. Download LeadMaster.apk below and install it on your phone.
-          files: LeadMaster.apk
+          tag_name: v${{ env.VERSION }}
+          name: LeadMaster v${{ env.VERSION }}
+          body: |
+            **Version ${{ env.VERSION }}**
+
+            - `LeadMaster-v${{ env.VERSION }}.apk` → install on Android phones (updates the old app)
+            - `LeadMaster-EdgeOne-v${{ env.VERSION }}.zip` → upload to EdgeOne Pages (New Deployment)
+
+            Change: ${{ github.event.head_commit.message }}
+          files: |
+            LeadMaster-v${{ env.VERSION }}.apk
+            LeadMaster-EdgeOne-v${{ env.VERSION }}.zip
