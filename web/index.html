@@ -294,11 +294,41 @@
       if (w) steps.push({ title: 'Welcome message', text: w });
       productsToSend(wa, products).forEach(p => {
         const photo = p.collage_url || (p.images[0] && p.images[0].url) || '';
-        steps.push({ title: p.name, text: (photo ? photo + '\n\n' : '') + productCaption(p) });
+        steps.push({ title: p.name, text: (photo ? photo + '\n\n' : '') + productCaption(p), caption: productCaption(p),
+          photos: p.images.map(i => i.url), collageUrl: p.collage_url, key: p.id + ':' + (p.collage_url || p.images.map(i => i.url).join('|')) });
       });
       const l = linksText(wa);
       if (l) steps.push({ title: 'Catalogue & location links', text: l });
       return steps;
+    };
+    // Computer: put the product picture on the clipboard so it can be pasted (Ctrl+V) into the chat
+    const canCopyImage = () => !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext) && !isMobileUA();
+    const pngCache = new Map();
+    const productPng = (step) => {
+      if (!pngCache.has(step.key)) {
+        const make = async () => {
+          let blob = null;
+          if (step.collageUrl) { try { const r = await fetch(step.collageUrl, { mode: 'cors' }); if (r.ok) blob = await r.blob(); } catch (e) {} }
+          if (!blob) blob = await buildCollageBlob(step.photos);
+          if (!blob) throw new Error('Photo could not be loaded');
+          return toPngBlob(blob);
+        };
+        const pr = make(); pr.catch(() => pngCache.delete(step.key)); pngCache.set(step.key, pr);
+      }
+      return pngCache.get(step.key);
+    };
+    const prepareStepPhotos = (steps) => { if (canCopyImage()) steps.forEach(st => { if (st.photos && st.photos.length) productPng(st).catch(() => {}); }); };
+    // Opens the chat for one step. Product on a computer: photo copied + details typed → user presses Ctrl+V, Enter
+    const openWaStep = async (lead, step, mode, toast) => {
+      if (step.photos && step.photos.length && canCopyImage()) {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': productPng(step) })]);
+          openWaChat(lead, step.caption, mode);
+          if (toast) toast('Photo copied: in WhatsApp press Ctrl+V, then Enter.', 'success');
+          return;
+        } catch (e) { /* fall back to the photo link */ }
+      }
+      openWaChat(lead, step.text, mode);
     };
     const openWaChat = (lead, text, mode) => {
       const url = waChatUrl(lead, text, mode);
@@ -340,6 +370,7 @@
       const steps = buildWebSteps(lead, wa, products);
       if (!steps.length) { if (toast) toast('Add a welcome message or products in Settings first.', 'error'); return; }
       openWaChat(lead, steps[0].text, wa && wa.mode);
+      prepareStepPhotos(steps);
       if (steps.length > 1) window.dispatchEvent(new CustomEvent('lm-wa-steps', { detail: { lead, steps, mode: wa && wa.mode } }));
     };
     const isMobileUA = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/i.test(navigator.platform));
@@ -1682,7 +1713,7 @@
       return (
         <div className="fixed bottom-4 left-3 right-3 sm:left-auto sm:right-6 sm:w-[26rem] z-[92] bg-slate-900 text-white rounded-2xl shadow-2xl p-4 animate-slide-up">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-slate-300">{seq.lead.name} • message {seq.index} of {seq.steps.length} opened — press Send in WhatsApp</p>
+            <p className="text-xs text-slate-300">{seq.lead.name} • message {seq.index} of {seq.steps.length} opened — {seq.steps[seq.index - 1].photos && seq.steps[seq.index - 1].photos.length && canCopyImage() ? <b className="text-green-300">press Ctrl+V, then Enter in WhatsApp</b> : 'press Send in WhatsApp'}</p>
             <button onClick={onStop} className="text-xs text-slate-400 hover:text-white px-2 py-1">Stop</button>
           </div>
           <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mb-3"><div className="h-full bg-green-500" style={{ width: (seq.index / seq.steps.length * 100) + '%' }} /></div>
@@ -1823,7 +1854,7 @@
             <h3 className="font-semibold text-slate-700">Product Catalogue <span className="text-slate-400 font-normal text-sm">({products.length})</span></h3>
             <Button onClick={() => setEditing({})} icon={Plus}>Add Product</Button>
           </div>
-          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. Every product goes as its own message: Welcome → Product 1 (photo + details) → Product 2 … → links. WhatsApp opens this customer's chat with the message typed in; you press Send. Android app: the next message opens automatically and real photos are attached. Browser: tap "Next" at the bottom; the photo goes as a link with preview.</p>
+          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. Every product goes as its own message: Welcome → Product 1 (photo + details) → Product 2 … → links. WhatsApp opens this customer's chat with the message typed in; you press Send. Android app: the next message opens automatically and real photos are attached. Computer: tap "Next" at the bottom; the product photo is copied automatically — in WhatsApp press Ctrl+V, then Enter.</p>
           {products.length === 0 && <div className="text-sm text-slate-400 text-center py-6 border border-dashed border-slate-200 rounded-xl">No products yet. Click "Add Product" to create your catalogue.</div>}
           <div className="space-y-2">
             {products.map(p => (
@@ -1924,7 +1955,7 @@
       }, []);
       const openNextWebStep = () => {
         if (!webSeq) return;
-        openWaChat(webSeq.lead, webSeq.steps[webSeq.index].text, webSeq.mode);
+        openWaStep(webSeq.lead, webSeq.steps[webSeq.index], webSeq.mode, showToast);
         if (webSeq.index + 1 >= webSeq.steps.length) { setWebSeq(null); showToast('Last message opened. Press Send in WhatsApp.', 'success'); }
         else setWebSeq({ ...webSeq, index: webSeq.index + 1 });
       };
