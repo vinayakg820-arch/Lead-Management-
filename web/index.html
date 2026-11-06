@@ -1,0 +1,2110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>LeadMaster - Lead Management System</title>
+  
+  <!-- Tailwind CSS for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel to compile JSX in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    // Register a custom preset to force the classic React runtime
+    // This avoids the 'react/jsx-runtime' import error and pragma conflicts
+    Babel.registerPreset('react-classic', {
+      presets: [
+        [Babel.availablePresets['react'], { runtime: 'classic' }]
+      ]
+    });
+  </script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+
+  <!-- Recharts & Dependencies for Charts -->
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+  <style>
+    /* Prevent FOUC (Flash of Unstyled Content) */
+    body { background-color: #f8fafc; margin: 0; padding: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    
+    /* Custom Keyframes from the React App */
+    @keyframes slideUpFade {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(100%); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes fadeOutRight {
+      from { opacity: 1; transform: translateX(0); }
+      to { opacity: 0; transform: translateX(100%); }
+    }
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-slide-up { animation: slideUpFade 0.5s ease-out forwards; opacity: 0; }
+    .animate-slide-in-right { animation: slideInRight 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+    .animate-fade-out-right { animation: fadeOutRight 0.3s ease-in forwards; }
+    .animate-pop-in { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1) forwards; }
+    
+    /* Custom scrollbar for a cleaner look */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  
+    /* ---- Responsive: phone tables become cards ---- */
+    html, body { max-width: 100%; overflow-x: hidden; }
+    @media (max-width: 767px) {
+      table, tbody { display: block; width: 100%; }
+      thead { display: none; }
+      tr { display: block; margin: 10px 8px; padding: 6px 14px; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      td { display: flex !important; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 8px 0 !important; border: 0 !important; white-space: normal !important; text-align: right; min-width: 0 !important; }
+      td::before { content: attr(data-label); flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #64748b; text-align: left; padding-top: 2px; }
+      td[colspan]::before, td[data-label=""]::before { display: none; }
+      td[colspan] { justify-content: center; }
+      td + td { border-top: 1px dashed #eef2f7 !important; }
+    }
+  </style>
+  <script>
+    (function () {
+      var queued = false;
+      function label() {
+        queued = false;
+        document.querySelectorAll('table').forEach(function (t) {
+          var heads = Array.prototype.map.call(t.querySelectorAll('thead th'), function (h) { return h.textContent.trim(); });
+          if (!heads.length) return;
+          t.querySelectorAll('tbody tr').forEach(function (tr) {
+            Array.prototype.forEach.call(tr.children, function (td, i) {
+              var l = heads[i] || '';
+              if (td.getAttribute('data-label') !== l) td.setAttribute('data-label', l);
+            });
+          });
+        });
+      }
+      document.addEventListener('DOMContentLoaded', function () {
+        new MutationObserver(function () { if (!queued) { queued = true; requestAnimationFrame(label); } })
+          .observe(document.body, { childList: true, subtree: true });
+      });
+    })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Use the custom react-classic preset and removed manual pragmas -->
+  <script type="text/babel" data-presets="env,react-classic">
+    const { useState, useMemo, useRef, useEffect } = React;
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = window.Recharts;
+
+    const createIcon = (paths) => ({ className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} dangerouslySetInnerHTML={{ __html: paths }} />
+    );
+
+    const Icons = {
+      LayoutDashboard: createIcon('<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>'),
+      Users: createIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
+      Settings: createIcon('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
+      Plus: createIcon('<path d="M5 12h14"/><path d="M12 5v14"/>'),
+      Search: createIcon('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
+      Phone: createIcon('<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>'),
+      Calendar: createIcon('<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>'),
+      TrendingUp: createIcon('<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>'),
+      IndianRupee: createIcon('<path d="M6 3h12"/><path d="M6 8h12"/><path d="m6 13 8.5 8"/><path d="M6 13h3"/><path d="M9 13c6.667 0 6.667-10 0-10"/>'),
+      X: createIcon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+      Edit2: createIcon('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'),
+      Trash2: createIcon('<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>'),
+      ChevronDown: createIcon('<path d="m6 9 6 6 6-6"/>'),
+      AlertCircle: createIcon('<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>'),
+      Info: createIcon('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),
+      CheckCircle: createIcon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>'),
+      PieChartIcon: createIcon('<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>'),
+      Eye: createIcon('<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>'),
+      Database: createIcon('<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>'),
+      Download: createIcon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>'),
+      Upload: createIcon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>'),
+      Lock: createIcon('<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'),
+      LogOut: createIcon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>'),
+      Key: createIcon('<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>'),
+      UserPlus: createIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>'),
+      MapPin: createIcon('<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>'),
+      Mic: createIcon('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/><line x1="8" x2="16" y1="22" y2="22"/>'),
+      ClipboardList: createIcon('<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>'),
+      Activity: createIcon('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'),
+      CheckSquare: createIcon('<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>')
+    };
+
+    const { LayoutDashboard, Users, Settings, Plus, Search, Phone, Calendar, TrendingUp, IndianRupee, X, Edit2, Trash2, ChevronDown, AlertCircle, Info, CheckCircle, PieChartIcon, Eye, Database, Download, Upload, Lock, LogOut, Key, UserPlus, MapPin, Mic, ClipboardList, Activity, CheckSquare } = Icons;
+
+    const initialAdmin = {
+      id: 'admin-01', name: 'System Admin', phone: 'N/A', address: 'HQ',
+      loginId: 'vinayakg820@gmail.com', password: '', role: 'admin',
+      lastModified: Date.now() // Security Timestamp
+    };
+
+    const dummyCategories = ['Instagram Ad', 'Facebook Ad', 'Organic WhatsApp', 'Website Referral'];
+    const dummyReferences = ['Word of Mouth', 'Google Search', 'Justdial', 'Direct Walk-in'];
+    const normalizeStringList = (value, fallback) => Array.isArray(value)
+      ? value.filter(item => typeof item === 'string').map(item => item.trim()).filter(Boolean)
+      : [...fallback];
+    const normalizeWaSettings = (value) => {
+      const settings = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      return {
+        welcome: typeof settings.welcome === 'string' ? settings.welcome : '',
+        catalogue: typeof settings.catalogue === 'string' ? settings.catalogue : '',
+        maps: typeof settings.maps === 'string' ? settings.maps : '',
+        mode: settings.mode === 'web' ? 'web' : 'auto',
+        sendProducts: settings.sendProducts !== false,
+        androidApp: ['business', 'personal'].includes(settings.androidApp) ? settings.androidApp : 'auto'
+      };
+    };
+    const dummyLeads = [
+      { id: 1, name: 'Rahul Sharma', phone: '+91 9876543210', enquiryDate: '2023-10-25', category: 'Instagram Ad', product: 'Marketing Services', reference: 'Google Search', callStatus: 'Made Call', expectedBuyDate: '2023-11-05', visitedStatus: 'Visited', buyingConfirmation: 'Yes', buyingWhen: 'Next Week', notBuyingReason: '', conversionStatus: 'Converted', assignedTo: null },
+      { id: 2, name: 'Priya Singh', phone: '+91 8765432109', enquiryDate: '2023-10-26', category: 'Facebook Ad', product: 'Web Design', reference: 'Word of Mouth', callStatus: 'Pending', expectedBuyDate: '', visitedStatus: 'Not Visited', buyingConfirmation: 'Pending', buyingWhen: '', notBuyingReason: '', conversionStatus: 'In Progress', assignedTo: null },
+      { id: 3, name: 'Amit Patel', phone: '+91 7654321098', enquiryDate: '2023-10-27', category: 'Organic WhatsApp', product: 'Consulting', reference: 'Justdial', callStatus: 'Made Call', expectedBuyDate: '', visitedStatus: 'Not Visited', buyingConfirmation: 'No', buyingWhen: '', notBuyingReason: 'Price too high', conversionStatus: 'Not Converted', assignedTo: null },
+    ];
+    // ---------- Supabase ----------
+    const sb = supabase.createClient('https://cssswtyzfmfoijcjgxpe.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzc3N3dHl6Zm1mb2lqY2pneHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3MzI1MjUsImV4cCI6MjEwODMwODUyNX0.Em-aabrMfICAsYMfGf719hN0eXMsxt2CGcAkfi4Fe98');
+    const toEmail = (id) => { const v = String(id).trim().toLowerCase(); return v.includes('@') ? v : v + '@leadmaster.app'; };
+    const waNum = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? '91' + d : d; };
+    // ---------- Product catalogue ----------
+    const normalizeProduct = (r) => ({
+      id: String(r.id), name: r.name || '', description: r.description || '', price: r.price || '',
+      images: Array.isArray(r.images) ? r.images.filter(i => i && i.url) : [],
+      active: r.active !== false, sort_order: Number(r.sort_order) || 0
+    });
+    const sortProducts = (list) => [...list].sort((a, b) => (a.sort_order - b.sort_order) || a.id.localeCompare(b.id));
+    const fmtPrice = (p) => { const v = String(p || '').trim(); if (!v) return ''; return /^[\d,.\s]+$/.test(v) ? '₹' + v : v; };
+    const productsToSend = (wa, products) => (wa && wa.sendProducts === false) ? [] : (products || []).filter(p => p.active);
+    const isNativeApp = () => !!(window.AndroidBridge && window.AndroidBridge.shareWhatsApp);
+    const compressImage = (file, maxSide = 1280, quality = 0.82) => new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const ctx = c.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        c.toBlob(bl => bl ? resolve(bl) : reject(new Error('Could not process ' + file.name)), 'image/jpeg', quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('This photo format is not supported: ' + file.name + ' (use JPG or PNG)')); };
+      img.src = url;
+    });
+
+    const buildWaText = (lead, wa, products, opts = {}) => {
+      const parts = [];
+      if (wa && wa.welcome && wa.welcome.trim()) parts.push(wa.welcome.trim().replace(/\{name\}/gi, lead.name || ''));
+      const list = productsToSend(wa, products);
+      if (list.length) {
+        const lines = list.map((p, i) => {
+          let t = '*' + (i + 1) + '. ' + p.name.trim() + '*';
+          const pr = fmtPrice(p.price); if (pr) t += ' — ' + pr;
+          if (p.description.trim()) t += '\n' + p.description.trim();
+          if (opts.photoLinks && p.images.length) t += '\n📷 ' + p.images[0].url;
+          return t;
+        });
+        parts.push('🛒 *Our Products:*\n\n' + lines.join('\n\n'));
+      }
+      if (wa && wa.catalogue && wa.catalogue.trim()) parts.push('🛍️ Our Catalogue:\n' + wa.catalogue.trim());
+      if (wa && wa.maps && wa.maps.trim()) parts.push('📍 Our Location:\n' + wa.maps.trim());
+      return parts.join('\n\n');
+    };
+    // Phones/tablets: wa.me opens the WhatsApp app. Computers: WhatsApp Web (the desktop app turns emojis into "?")
+    const waChatUrl = (lead, text, mode) => {
+      const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/i.test(navigator.platform));
+      const num = waNum(lead.phone), q = text ? encodeURIComponent(text) : '';
+      if (mobile) return 'https://wa.me/' + num + (q ? '?text=' + q : '');
+      if (mode === 'web') return 'https://web.whatsapp.com/send?phone=' + num + (q ? '&text=' + q : '');
+      // "auto": the same address wa.me redirects to; WhatsApp lets you pick the app or WhatsApp Web
+      return 'https://api.whatsapp.com/send/?phone=' + num + (q ? '&text=' + q : '') + '&type=phone_number&app_absent=0';
+    };
+    const WA_MAX_URL = 30000; // WhatsApp accepts long pre-filled text; only extreme lengths fall back to copy & paste
+    const buildWaLink = (lead, wa, products) => {
+      const text = buildWaText(lead, wa, products, { photoLinks: true }), mode = wa && wa.mode, url = waChatUrl(lead, text, mode);
+      return url.length <= WA_MAX_URL ? url : waChatUrl(lead, '', mode);
+    };
+    const copyText = (text) => {
+      try { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).catch(() => {}); return true; } } catch (e) {}
+      try { const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); const ok = document.execCommand('copy'); document.body.removeChild(t); return ok; } catch (e) { return false; }
+    };
+    // Android app (APK): sends the message + product photos straight into the customer's WhatsApp chat.
+    // Browser: the chat link pre-fills the message (photos as links); the full text is also copied as a backup.
+    const sendWa = (lead, wa, toast, products) => (e) => {
+      if (isNativeApp()) {
+        e.preventDefault();
+        const urls = productsToSend(wa, products).flatMap(p => p.images.map(i => i.url)).slice(0, 30);
+        const text = buildWaText(lead, wa, products, { photoLinks: false });
+        try {
+          window.AndroidBridge.shareWhatsApp(waNum(lead.phone), text, JSON.stringify(urls), (wa && wa.androidApp) || 'auto');
+          if (toast && urls.length) toast('Sending ' + urls.length + ' photo(s) to WhatsApp…', 'success');
+        } catch (err) { if (toast) toast('Could not open WhatsApp: ' + err.message, 'error'); }
+        return;
+      }
+      const text = buildWaText(lead, wa, products, { photoLinks: true });
+      if (!text) return;
+      const ok = copyText(text);
+      if (ok && toast) toast('Message copied. If it is not typed in the chat, just paste it (Ctrl+V, or long-press then Paste).', 'success');
+    };
+    const MsgIcon = ({ className }) => (<svg className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>);
+    const rowOf = (table, o) => table === 'settings' ? o : ({ id: String(o.id), assigned_to: o.assignedTo ?? null, data: o });
+    const profileToUser = (p) => ({ ...p.data, id: p.id, role: p.role });
+    const adminCall = async (body) => {
+      const { data, error } = await sb.functions.invoke('admin-users', { body });
+      if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch (e) {} throw new Error(m); }
+      if (data && data.error) throw new Error(data.error);
+    };
+    const COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+    const Card = ({ children, className = '', style }) => (
+      <div className={`bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden ${className}`} style={style}>{children}</div>
+    );
+
+    const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', icon: IconComp, form, disabled, id }) => {
+      const baseStyle = "inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed";
+      const variants = {
+        primary: "bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500 shadow-sm",
+        secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-indigo-500",
+        danger: "bg-red-50 text-red-600 hover:bg-red-100 focus:ring-red-500",
+        ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+      };
+      
+      return (
+        <button type={type} id={id} onClick={onClick} form={form} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>
+          {IconComp && <IconComp className={`w-4 h-4 ${children ? 'mr-2' : ''}`} />}
+          {children}
+        </button>
+      );
+    };
+
+    const Input = ({ label, name, value, onChange, type = 'text', required, placeholder, className="", enableMic=false, autoFocus=false }) => {
+      const [isListening, setIsListening] = useState(false);
+
+      const handleMic = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          console.warn("Speech Recognition is not supported in this browser.");
+          return;
+        }
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-IN'; // Optimized for Indian English
+        recognition.interimResults = false;
+        
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend = () => setIsListening(false);
+        recognition.onresult = (e) => {
+          const text = e.results[0][0].transcript;
+          
+          let finalValue = text;
+          
+          if (name === 'phone') {
+            // Strip out spaces so "9 8" becomes "98"
+            finalValue = text.replace(/[^0-9+]/g, '');
+          } else if (name === 'name') {
+            // Convert spoken titles to their abbreviations
+            finalValue = finalValue.replace(/\bmister\b/gi, 'Mr.')
+                                   .replace(/\bmiss\b/gi, 'Ms.')
+                                   .replace(/\bmisses\b/gi, 'Mrs.');
+            
+            // Auto-capitalize the first letter of each word
+            finalValue = finalValue.replace(/\b\w/g, char => char.toUpperCase());
+          }
+          
+          onChange({ target: { name, value: finalValue } });
+        };
+        recognition.start();
+      };
+
+      return (
+        <div className={`flex flex-col ${className}`}>
+          <label className="text-sm font-medium text-slate-700 mb-1.5">
+            {label} {required && <span className="text-red-500">*</span>}
+          </label>
+          <div className="relative flex items-center">
+            <input type={type} name={name} value={value} onChange={onChange} placeholder={placeholder} autoFocus={autoFocus}
+              className={`w-full px-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm transition-all bg-white ${enableMic ? 'pr-10' : ''}`} />
+            {enableMic && (
+              <button type="button" onClick={handleMic} className={`absolute right-2 p-1.5 rounded-md ${isListening ? 'bg-red-100 text-red-500 animate-pulse' : 'text-slate-400 hover:bg-slate-100 hover:text-indigo-500'} transition-colors`} title="Click to speak">
+                <Mic className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const Select = ({ label, name, value, onChange, options, required, className="", containerClassName="" }) => (
+      <div className={`flex flex-col ${containerClassName}`}>
+        <label className="text-sm font-medium text-slate-700 mb-1.5">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+        <div className="relative">
+          <select name={name} value={value} onChange={onChange}
+            className={`w-full px-3 py-2.5 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm transition-all bg-white ${className}`}>
+            <option value="">Select option</option>
+            {options.map((opt, i) => (
+              <option key={i} value={typeof opt === 'string' ? opt : opt.value}>{typeof opt === 'string' ? opt : opt.label}</option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
+        </div>
+      </div>
+    );
+
+    const Badge = ({ status }) => {
+      const styles = {
+        'Converted': 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+        'Not Converted': 'bg-red-100 text-red-700 border border-red-200',
+        'In Progress': 'bg-amber-100 text-amber-700 border border-amber-200',
+        'Made Call': 'bg-blue-100 text-blue-700 border border-blue-200',
+        'Not Received': 'bg-orange-100 text-orange-700 border border-orange-200',
+        'Not Reachable': 'bg-rose-100 text-rose-700 border border-rose-200',
+        'Pending': 'bg-slate-100 text-slate-700 border border-slate-200',
+        'Pending Approval': 'bg-amber-100 text-amber-700 border border-amber-200',
+        'Approved': 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+        'Completed': 'bg-blue-100 text-blue-700 border border-blue-200',
+        'Visited': 'bg-purple-100 text-purple-700 border border-purple-200',
+        'Not Visited': 'bg-slate-100 text-slate-600 border border-slate-200',
+        'admin': 'bg-indigo-100 text-indigo-700 border border-indigo-200 uppercase tracking-wider',
+        'user': 'bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider'
+      };
+      return (
+        <span className={`inline-flex items-center justify-center whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-bold ${styles[status] || styles['Pending']}`}>
+          {status}
+        </span>
+      );
+    };
+
+    const Toast = ({ message, type, isExiting }) => {
+      if (!message) return null;
+      const bg = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-red-500' : 'bg-indigo-500';
+      const ToastIcon = type === 'success' ? CheckCircle : type === 'error' ? AlertCircle : Info;
+      return (
+        <div className={`fixed bottom-6 right-6 z-[100] flex items-center px-4 py-3 rounded-lg shadow-xl text-white ${bg} ${isExiting ? 'animate-fade-out-right' : 'animate-slide-in-right'}`}>
+          <ToastIcon className="w-5 h-5 mr-3" />
+          <span className="font-medium tracking-wide">{message}</span>
+        </div>
+      );
+    };
+
+    function LoginView({ onLogin, onImportLogin, showToast }) {
+      const [loginId, setLoginId] = useState('');
+      const [password, setPassword] = useState('');
+      const fileInputRef = useRef(null);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        onLogin(loginId, password);
+      };
+
+      const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = JSON.parse(event.target.result);
+            if (data.type === 'LEADMASTER_ACCESS_CARD' && data.user) {
+              onImportLogin(data.user, data.categories, data.references);
+            } else {
+              showToast('Invalid Access Card file.', 'error');
+            }
+          } catch (error) {
+            showToast('Error reading Access Card.', 'error');
+          }
+          e.target.value = null; // reset
+        };
+        reader.readAsText(file);
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4">
+          <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-pop-in">
+            <div className="bg-slate-900 p-8 text-center">
+              <div className="inline-flex items-center justify-center p-3 bg-indigo-500 rounded-xl mb-4 shadow-lg shadow-indigo-500/30">
+                <TrendingUp className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-white tracking-tight">LeadMaster</h1>
+              <p className="text-slate-400 mt-2 text-sm">Sign in to access your dashboard</p>
+            </div>
+            
+            <div className="p-8">
+              <form onSubmit={handleSubmit} className="space-y-5">
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-1.5 block">Login ID / User ID</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Users className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input type="text" required value={loginId} onChange={(e) => setLoginId(e.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm transition-all" placeholder="Enter your ID" />
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-1.5 block">Password</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Lock className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm transition-all" placeholder="Enter your password" />
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full py-2.5 text-base mt-2 shadow-md">Sign In</Button>
+              </form>
+
+              <div className="mt-8 pt-6 border-t border-slate-100">
+                <p className="text-center text-sm font-medium text-slate-500 mb-4">Or sign in instantly with an Access Card</p>
+                <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+                <Button variant="secondary" onClick={() => fileInputRef.current?.click()} icon={Key} className="w-full bg-slate-50 border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                  Upload Access Card to Login
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8 text-center animate-slide-up" style={{ animationDelay: '0.2s' }}>
+            <p className="text-sm font-medium text-slate-500">Powered By <span className="text-indigo-600 font-bold tracking-wide">NexGen Softwares</span></p>
+            <p className="text-xs text-slate-400 mt-1.5 font-medium">Vinayak Gosavi - 9156103714</p>
+          </div>
+        </div>
+      );
+    }
+
+    function DashboardView({ leads, currentUser }) {
+      const [selectedMonth, setSelectedMonth] = useState('All');
+
+      const availableMonths = useMemo(() => {
+        const months = new Set();
+        leads.forEach(l => {
+          if (l.enquiryDate) {
+            const [year, month] = l.enquiryDate.split('-');
+            if (year && month) months.add(`${year}-${month}`);
+          }
+        });
+        return Array.from(months).sort().reverse();
+      }, [leads]);
+
+      const formatMonth = (monthStr) => {
+        if (!monthStr) return '';
+        const [year, month] = monthStr.split('-');
+        const date = new Date(year, parseInt(month) - 1, 1);
+        return date.toLocaleString('default', { month: 'short', year: 'numeric' });
+      };
+
+      const dashboardLeads = useMemo(() => {
+        let filtered = currentUser?.role === 'admin' ? leads : leads.filter(l => l.assignedTo === currentUser?.id);
+        if (selectedMonth !== 'All') {
+          filtered = filtered.filter(l => l.enquiryDate && l.enquiryDate.startsWith(selectedMonth));
+        }
+        return filtered;
+      }, [leads, currentUser, selectedMonth]);
+      
+      const totalLeads = dashboardLeads.length;
+      const convertedLeads = dashboardLeads.filter(l => l.conversionStatus === 'Converted').length;
+      const conversionRate = totalLeads ? ((convertedLeads / totalLeads) * 100).toFixed(1) : 0;
+      const pendingCalls = dashboardLeads.filter(l => l.callStatus === 'Pending').length;
+
+      const categoryData = dashboardLeads.reduce((acc, lead) => {
+        if (!lead.category) return acc;
+        const existing = acc.find(item => item.name === lead.category);
+        if (existing) existing.value += 1;
+        else acc.push({ name: lead.category, value: 1 });
+        return acc;
+      }, []);
+
+      const statusData = [
+        { name: 'Converted', count: convertedLeads },
+        { name: 'In Progress', count: dashboardLeads.filter(l => l.conversionStatus === 'In Progress').length },
+        { name: 'Not Converted', count: dashboardLeads.filter(l => l.conversionStatus === 'Not Converted').length },
+      ];
+
+      return (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center mb-2 animate-slide-up">
+            <h3 className="text-lg font-semibold text-slate-700 hidden sm:block">Performance Overview</h3>
+            <div className="relative w-full sm:w-48 ml-auto">
+              <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="w-full pl-3 pr-8 py-2.5 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white shadow-sm font-medium text-slate-700">
+                <option value="All">All Time (Months)</option>
+                {availableMonths.map((m, i) => (<option key={i} value={m}>{formatMonth(m)}</option>))}
+              </select>
+              <ChevronDown className="absolute right-3 top-3 h-4 w-4 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              { title: "Assigned Leads", value: totalLeads, icon: Users, color: "text-blue-600", bg: "bg-blue-50" },
+              { title: "Converted Sales", value: convertedLeads, icon: IndianRupee, color: "text-emerald-600", bg: "bg-emerald-50" },
+              { title: "Conversion Rate", value: `${conversionRate}%`, icon: TrendingUp, color: "text-indigo-600", bg: "bg-indigo-50" },
+              { title: "Pending Calls", value: pendingCalls, icon: Phone, color: "text-amber-600", bg: "bg-amber-50" }
+            ].map((stat, i) => (
+              <Card key={i} className="p-6 animate-slide-up hover:-translate-y-1 transition-transform duration-300" style={{ animationDelay: `${i * 0.1}s` }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-slate-500">{stat.title}</p>
+                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{stat.value}</h3>
+                  </div>
+                  <div className={`p-3 rounded-full ${stat.bg} ${stat.color}`}><stat.icon className="w-6 h-6" /></div>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 animate-slide-up" style={{ animationDelay: "0.4s" }}>
+              <h3 className="text-lg font-semibold text-slate-800 mb-6 flex items-center"><PieChartIcon className="w-5 h-5 mr-2 text-indigo-500" /> Leads by Category</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart><Pie data={categoryData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">{categoryData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><RechartsTooltip /><Legend verticalAlign="bottom" height={36} /></PieChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+            <Card className="p-6 animate-slide-up" style={{ animationDelay: "0.5s" }}>
+              <h3 className="text-lg font-semibold text-slate-800 mb-6 flex items-center"><BarChart className="w-5 h-5 mr-2 text-indigo-500" /> Conversion Status Overview</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={statusData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} /><RechartsTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} /><Bar dataKey="count" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={40} /></BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    function LeadViewModal({ lead, onClose }) {
+      if (!lead) return null;
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] animate-pop-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-white rounded-t-2xl shrink-0">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Eye className="w-5 h-5 text-blue-500" /> View Lead Details</h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 overflow-y-auto custom-scrollbar bg-white">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-8">
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Customer Name</p><p className="text-base font-medium text-slate-800">{lead.name}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Mobile / WhatsApp</p><p className="text-base font-medium text-slate-800 flex items-center gap-1"><Phone className="w-4 h-4 text-slate-400"/> {lead.phone}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Enquiry Date</p><p className="text-base text-slate-700 flex items-center gap-1"><Calendar className="w-4 h-4 text-slate-400"/> {lead.enquiryDate || '-'}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Category</p><p className="text-base text-slate-700">{lead.category || '-'}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Product Looking For</p><p className="text-base text-slate-700">{lead.product || '-'}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Reference</p><p className="text-base text-slate-700">{lead.reference || '-'}</p></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Call Status</p><div className="mt-1"><Badge status={lead.callStatus} /></div></div>
+                <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Visited Status</p><div className="mt-1"><Badge status={lead.visitedStatus} /></div></div>
+                
+                {lead.visitedStatus === 'Not Visited' && lead.expectedVisitDate && (
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Expected Visit Date</p><p className="text-base text-slate-700 flex items-center gap-1"><Calendar className="w-4 h-4 text-slate-400"/> {lead.expectedVisitDate}</p></div>
+                )}
+                
+                {lead.callStatus === 'Made Call' && lead.callNotes && (
+                  <div className="sm:col-span-2 mt-2 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                    <p className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-1">What Discussed on Call</p>
+                    <p className="text-sm font-medium text-blue-900">{lead.callNotes}</p>
+                  </div>
+                )}
+                
+                <div className="sm:col-span-2 pt-4 mt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-8">
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Buying Confirmation</p><p className="text-base font-medium text-slate-800">{lead.buyingConfirmation || 'Pending'}</p></div>
+                  <div><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Expected Buy Date</p><p className="text-base text-slate-700">{lead.expectedBuyDate || '-'}</p></div>
+                  {lead.buyingConfirmation === 'Yes' && lead.buyingWhen && (<div className="sm:col-span-2"><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Expected When to Buy</p><p className="text-base text-emerald-600 font-medium">{lead.buyingWhen}</p></div>)}
+                  {lead.buyingConfirmation === 'No' && lead.notBuyingReason && (<div className="sm:col-span-2"><p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Reason for Not Buying</p><p className="text-base text-red-600 font-medium">{lead.notBuyingReason}</p></div>)}
+                  <div className="sm:col-span-2 mt-2 p-4 bg-slate-50 rounded-lg flex items-center justify-between border border-slate-100"><p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Final Lead Status</p><Badge status={lead.conversionStatus} /></div>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 border-t border-slate-200 flex justify-end gap-3 bg-white rounded-b-2xl shrink-0"><Button variant="secondary" onClick={onClose} className="px-8">Close</Button></div>
+          </div>
+        </div>
+      );
+    }
+
+    function LeadFormModal({ lead, leads, categories, references, onClose, onSave }) {
+      const [formData, setFormData] = useState(lead || {
+        name: '', phone: '', enquiryDate: new Date().toISOString().split('T')[0], category: '', product: '', reference: '', callStatus: 'Pending', callNotes: '', expectedBuyDate: '', visitedStatus: 'Not Visited', expectedVisitDate: '', buyingConfirmation: 'Pending', buyingWhen: '', notBuyingReason: '', conversionStatus: 'In Progress', assignedTo: null
+      });
+      const [errors, setErrors] = useState({});
+
+      // Keyboard shortcut for Space Bar / Ctrl + Space to save form
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+          // Trigger save if Space is pressed (outside inputs) or Ctrl+Space (anywhere)
+          if ((e.key === ' ' && !isInput) || (e.key === ' ' && e.ctrlKey)) {
+            e.preventDefault();
+            document.getElementById('saveLeadBtn')?.click();
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, []);
+
+      const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => {
+          const updatedData = { ...prev, [name]: value };
+          if (name === 'conversionStatus' && value === 'Converted') { updatedData.buyingConfirmation = 'Yes'; if (!updatedData.buyingWhen) updatedData.buyingWhen = 'Bought'; }
+          return updatedData;
+        });
+        if (errors[name]) setErrors(prev => ({ ...prev, [name]: null }));
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const newErrors = {};
+        if (!formData.name.trim()) newErrors.name = 'Name is required';
+        if (!formData.phone.trim()) newErrors.phone = 'Mobile Number is required';
+        
+        // Anti-Duplicate Phone Number Check
+        const duplicatePhone = leads.find(l => 
+          l.phone.replace(/\s+/g, '') === formData.phone.replace(/\s+/g, '') && 
+          l.id !== formData.id
+        );
+        if (duplicatePhone) {
+          newErrors.phone = 'This phone number already exists in the system!';
+        }
+
+        if (Object.keys(newErrors).length > 0) { setErrors(newErrors); return; }
+        onSave({ ...formData, id: formData.id || Date.now() });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] animate-pop-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200 bg-white rounded-t-2xl shrink-0">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">{lead ? <Edit2 className="w-5 h-5 text-indigo-500" /> : <Plus className="w-5 h-5 text-indigo-500" />}{lead ? 'Edit Lead Details' : 'Add New Lead'}</h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 overflow-y-auto custom-scrollbar">
+              <form id="leadForm" onSubmit={handleSubmit} className="space-y-6">
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-3 mb-4"><Users className="w-4 h-4 text-indigo-500"/> Customer Profile</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div><Input label="Customer Name" name="name" value={formData.name} onChange={handleChange} required placeholder="Enter full name" enableMic={true} autoFocus={true} />{errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}</div>
+                    <div><Input label="Mobile / WhatsApp" name="phone" value={formData.phone} onChange={handleChange} required placeholder="e.g. +91 9876543210" enableMic={true} />{errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}</div>
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-slate-100 pb-3 mb-4"><Info className="w-4 h-4 text-indigo-500"/> Lead Information</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                    <Input label="Enquiry Date" name="enquiryDate" type="date" value={formData.enquiryDate} onChange={handleChange} />
+                    <Select label="Enquiry Category" name="category" value={formData.category} onChange={handleChange} options={categories} />
+                    {formData.category ? (<Input label="Product Looking For" name="product" value={formData.product} onChange={handleChange} placeholder="e.g. Shoes, Service..." />) : (<div className="hidden md:block"></div>)}
+                    <Select label="Reference" name="reference" value={formData.reference} onChange={handleChange} options={references} />
+                    <Select label="Call Status" name="callStatus" value={formData.callStatus} onChange={handleChange} options={['Pending', 'Made Call', 'Not Received', 'Not Reachable']} />
+                    {formData.callStatus === 'Made Call' && (
+                      <Input label="What discussed on Call" name="callNotes" value={formData.callNotes || ''} onChange={handleChange} placeholder="Briefly describe the call..." />
+                    )}
+                    <Select label="Visited Status" name="visitedStatus" value={formData.visitedStatus} onChange={handleChange} options={['Not Visited', 'Visited']} />
+                    {formData.visitedStatus === 'Not Visited' && (
+                      <Input label="Expected Visit Date" name="expectedVisitDate" type="date" value={formData.expectedVisitDate || ''} onChange={handleChange} />
+                    )}
+                  </div>
+                </div>
+                <div className="bg-indigo-50/40 p-6 rounded-xl border border-indigo-100 shadow-sm">
+                  <h3 className="text-sm font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-2 border-b border-indigo-200/60 pb-3 mb-4"><TrendingUp className="w-4 h-4 text-indigo-500"/> Status & Outcome</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                    <Select label="Buying Confirmation" name="buyingConfirmation" value={formData.buyingConfirmation} onChange={handleChange} options={['Pending', 'Yes', 'No']} className="bg-white" />
+                    {formData.buyingConfirmation === 'Yes' && (<Input label="Expected When to Buy" name="buyingWhen" value={formData.buyingWhen} onChange={handleChange} placeholder="e.g. Next week, End of month" className="bg-white" />)}
+                    {formData.buyingConfirmation === 'No' && (<Input label="If Not, Why?" name="notBuyingReason" value={formData.notBuyingReason} onChange={handleChange} placeholder="e.g. Price too high, Bought elsewhere" className="bg-white" />)}
+                    {formData.buyingConfirmation === 'Pending' && (<div className="hidden md:block"></div>)}
+                    <Input label="Expected Buy Date (Approx)" name="expectedBuyDate" type="date" value={formData.expectedBuyDate} onChange={handleChange} className="bg-white" />
+                    <div className="md:col-span-3 pt-2">
+                      <Select label="Final Lead Status" name="conversionStatus" value={formData.conversionStatus} onChange={handleChange} options={['In Progress', 'Converted', 'Not Converted']} className="font-semibold text-indigo-900 border-indigo-300 focus:ring-indigo-500 bg-white shadow-sm" />
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </div>
+            <div className="p-5 border-t border-slate-200 flex justify-end gap-3 bg-white rounded-b-2xl shrink-0"><Button variant="secondary" onClick={onClose} className="px-6">Cancel</Button><Button type="submit" form="leadForm" id="saveLeadBtn" className="px-8 shadow-md">Save Lead Data (Ctrl+Space)</Button></div>
+          </div>
+        </div>
+      );
+    }
+
+    function AssignLeadModal({ lead, users, onClose, onSave }) {
+      const [selectedUser, setSelectedUser] = useState(lead.assignedTo || '');
+      
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        onSave({ ...lead, assignedTo: selectedUser || null });
+      };
+
+      const userOptions = users.map(u => ({ value: u.id, label: `${u.name} (${u.role})` }));
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm animate-pop-in flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-indigo-500" /> Assign Lead
+              </h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-600 mb-4">Assign <strong>{lead.name}</strong> to a team member.</p>
+              <form id="assignForm" onSubmit={handleSubmit}>
+                <Select label="Select Team Member" name="assignedTo" value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} options={userOptions} />
+              </form>
+            </div>
+            <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-xl">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="submit" form="assignForm">Save Assignment</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function BulkAssignModal({ leads, users, onClose, onSave }) {
+      const unassignedLeads = useMemo(() => leads.filter(l => !l.assignedTo), [leads]);
+      const [selectedLeadIds, setSelectedLeadIds] = useState(new Set());
+      const [selectedUserId, setSelectedUserId] = useState('');
+
+      const handleSelectAll = (e) => {
+        if (e.target.checked) {
+          setSelectedLeadIds(new Set(unassignedLeads.map(l => l.id)));
+        } else {
+          setSelectedLeadIds(new Set());
+        }
+      };
+
+      const handleSelectLead = (id, checked) => {
+        const newSet = new Set(selectedLeadIds);
+        if (checked) newSet.add(id);
+        else newSet.delete(id);
+        setSelectedLeadIds(newSet);
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!selectedUserId) return;
+        
+        const leadsToUpdate = unassignedLeads
+          .filter(l => selectedLeadIds.has(l.id))
+          .map(l => ({ ...l, assignedTo: selectedUserId }));
+        
+        onSave(leadsToUpdate);
+      };
+
+      const userOptions = users.map(u => ({ value: u.id, label: `${u.name} (${u.role})` }));
+      const allSelected = unassignedLeads.length > 0 && selectedLeadIds.size === unassignedLeads.length;
+      const isIndeterminate = selectedLeadIds.size > 0 && selectedLeadIds.size < unassignedLeads.length;
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl animate-pop-in flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 shrink-0">
+              <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-500" /> Bulk Assign Leads
+              </h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+              <div className="mb-6 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
+                <form id="bulkAssignForm" onSubmit={handleSubmit}>
+                   <Select 
+                     label="Assign Selected Leads To:" 
+                     name="assignedTo" 
+                     value={selectedUserId} 
+                     onChange={(e) => setSelectedUserId(e.target.value)} 
+                     options={userOptions}
+                     required
+                     className="bg-white"
+                   />
+                </form>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-slate-700">Unassigned Leads ({unassignedLeads.length})</h3>
+                  <span className="text-xs text-slate-500">{selectedLeadIds.size} selected</span>
+                </div>
+                
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto custom-scrollbar max-h-[40vh]">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                      <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
+                        <tr>
+                          <th className="p-3 w-12 text-center">
+                            <input 
+                              type="checkbox" 
+                              checked={allSelected}
+                              ref={input => { if (input) input.indeterminate = isIndeterminate; }}
+                              onChange={handleSelectAll}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                            />
+                          </th>
+                          <th className="p-3">Customer Name</th>
+                          <th className="p-3">Phone</th>
+                          <th className="p-3">Category</th>
+                          <th className="p-3">Enquiry Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {unassignedLeads.length > 0 ? (
+                          unassignedLeads.map((lead) => (
+                            <tr key={lead.id} className="hover:bg-slate-50">
+                              <td className="p-3 text-center">
+                                <input 
+                                  type="checkbox" 
+                                  checked={selectedLeadIds.has(lead.id)}
+                                  onChange={(e) => handleSelectLead(lead.id, e.target.checked)}
+                                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                                />
+                              </td>
+                              <td className="p-3 font-medium text-slate-900">{lead.name}</td>
+                              <td className="p-3 text-slate-600">{lead.phone}</td>
+                              <td className="p-3 text-slate-600">{lead.category || '-'}</td>
+                              <td className="p-3 text-slate-600">{lead.enquiryDate || '-'}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="5" className="p-6 text-center text-slate-500">No unassigned leads available.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 rounded-b-xl shrink-0">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="submit" form="bulkAssignForm" disabled={selectedLeadIds.size === 0 || !selectedUserId}>
+                Assign {selectedLeadIds.size > 0 ? selectedLeadIds.size : ''} Leads
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function LeadsManagerView({ waSettings, products, showToast, leads, categories, references, onAdd, onUpdate, onBulkUpdate, onDelete, currentUser, users }) {
+      const isAdmin = currentUser.role === 'admin';
+      const [isFormOpen, setIsFormOpen] = useState(false); 
+      const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
+      const [editingLead, setEditingLead] = useState(null);
+      const [viewingLead, setViewingLead] = useState(null); 
+      const [assigningLead, setAssigningLead] = useState(null);
+      const [searchTerm, setSearchTerm] = useState('');
+      const [filterStatus, setFilterStatus] = useState('All');
+      const [timelineFilter, setTimelineFilter] = useState('All');
+      const [categoryFilter, setCategoryFilter] = useState('All'); // Added Category State
+      const [timelineSort, setTimelineSort] = useState('Desc'); // Added Sorting State
+      const [monthFilter, setMonthFilter] = useState('All'); // Added Month Filter
+
+      // Derived available months for filtering
+      const availableMonths = useMemo(() => {
+        const months = new Set();
+        leads.forEach(l => {
+          if (l.enquiryDate) {
+            const [year, month] = l.enquiryDate.split('-');
+            if (year && month) months.add(`${year}-${month}`);
+          }
+        });
+        return Array.from(months).sort().reverse();
+      }, [leads]);
+
+      const formatMonth = (monthStr) => {
+        if (!monthStr) return '';
+        const [year, month] = monthStr.split('-');
+        const date = new Date(year, parseInt(month) - 1, 1);
+        return date.toLocaleString('default', { month: 'short', year: 'numeric' });
+      };
+
+      // Keyboard shortcut for 'N' to open New Lead form
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+          if (!isInput && e.key.toLowerCase() === 'n' && !isFormOpen && !viewingLead && !assigningLead) {
+            e.preventDefault();
+            setEditingLead(null);
+            setIsFormOpen(true);
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, [isFormOpen, viewingLead, assigningLead]);
+
+      // Security Filtering applied here!
+      const filteredLeads = useMemo(() => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+        let result = leads.filter(l => {
+          const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase()) || l.phone.includes(searchTerm);
+          const matchesFilter = filterStatus === 'All' || l.conversionStatus === filterStatus || (filterStatus === 'Pending' && l.conversionStatus === 'In Progress');
+          const matchesUser = isAdmin ? true : l.assignedTo === currentUser.id;
+          const matchesCategory = categoryFilter === 'All' || l.category === categoryFilter; // Apply Category Filter
+          const matchesMonth = monthFilter === 'All' || (l.enquiryDate && l.enquiryDate.startsWith(monthFilter)); // Apply Month Filter
+          
+          let matchesTimeline = true;
+          if (timelineFilter === 'Today') matchesTimeline = l.expectedBuyDate === todayStr;
+          else if (timelineFilter === 'Tomorrow') matchesTimeline = l.expectedBuyDate === tomorrowStr;
+
+          return matchesSearch && matchesFilter && matchesUser && matchesTimeline && matchesCategory && matchesMonth;
+        });
+
+        // Time-wise Sorting
+        result.sort((a, b) => {
+          const dateA = new Date(a.expectedBuyDate || a.enquiryDate || 0).getTime();
+          const dateB = new Date(b.expectedBuyDate || b.enquiryDate || 0).getTime();
+          return timelineSort === 'Asc' ? dateA - dateB : dateB - dateA;
+        });
+
+        return result;
+      }, [leads, searchTerm, filterStatus, timelineFilter, categoryFilter, monthFilter, timelineSort, currentUser, isAdmin]);
+
+      const handleSave = (data) => { 
+        // If a non-admin creates a new lead, auto-assign it to them so it appears in their list
+        if (!editingLead && !isAdmin) {
+          data.assignedTo = currentUser.id;
+        }
+        editingLead ? onUpdate(data) : onAdd(data); 
+        setIsFormOpen(false); 
+      };
+      const handleAssignSave = (updatedLead) => { onUpdate(updatedLead); setAssigningLead(null); };
+
+      return (
+        <div className="md:h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
+          <div className="flex flex-wrap gap-3 justify-between items-center">
+            <h2 className="text-xl font-bold text-slate-800">Lead Database</h2>
+            <div className="flex gap-2 w-full sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
+              {isAdmin && (
+                <Button onClick={() => setIsBulkAssignOpen(true)} variant="secondary" icon={Users}>Assignment Of Leads</Button>
+              )}
+              <Button onClick={() => {setEditingLead(null); setIsFormOpen(true);}} icon={Plus}>Add New Lead (N)</Button>
+            </div>
+          </div>
+          <Card className="flex-1 flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row flex-wrap sm:gap-3 w-full xl:w-auto flex-1">
+                <div className="relative col-span-2 w-full sm:max-w-xs"><input type="text" placeholder="Search by name or phone..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" /><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /></div>
+                <div className="relative w-full sm:w-40"><select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full pl-3 pr-8 py-2 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"><option value="All">All Leads</option><option value="Pending">Pending</option><option value="Converted">Converted</option><option value="Not Converted">Not Converted</option></select><ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" /></div>
+                
+                {/* NEW: Category Filter Dropdown */}
+                <div className="relative w-full sm:w-48"><select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="w-full pl-3 pr-8 py-2 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"><option value="All">All Categories</option>{categories.map((cat, i) => (<option key={i} value={cat}>{cat}</option>))}</select><ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" /></div>
+                
+                {/* NEW: Month Filter Dropdown */}
+                <div className="relative w-full sm:w-40"><select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-full pl-3 pr-8 py-2 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"><option value="All">All Months</option>{availableMonths.map((m, i) => (<option key={i} value={m}>{formatMonth(m)}</option>))}</select><ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" /></div>
+                
+                <div className="flex gap-2 col-span-2 w-full sm:w-auto">
+                  <div className="relative w-full sm:w-56"><select value={timelineFilter} onChange={(e) => setTimelineFilter(e.target.value)} className="w-full pl-8 pr-8 py-2 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-indigo-50 font-medium text-indigo-700 shadow-sm"><option value="All">Timeline: All Dates</option><option value="Today">Expected Today</option><option value="Tomorrow">Expected Tomorrow</option></select><Calendar className="absolute left-3 top-2.5 h-4 w-4 text-indigo-600 pointer-events-none" /><ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-indigo-600 pointer-events-none" /></div>
+                  <button onClick={() => setTimelineSort(prev => prev === 'Asc' ? 'Desc' : 'Asc')} className="flex items-center justify-center px-3 py-2 border border-indigo-200 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" title={`Sort Timeline: ${timelineSort === 'Asc' ? 'Oldest First' : 'Newest First'}`}>
+                    <span className="text-sm font-medium mr-1 hidden sm:block">Sort</span>
+                    <span className="text-xs font-bold leading-none">{timelineSort === 'Asc' ? '▲' : '▼'}</span>
+                  </button>
+                </div>
+              </div>
+              <span className="text-sm text-slate-500 hidden xl:block whitespace-nowrap font-medium">Total: {filteredLeads.length}</span>
+            </div>
+            <div className="md:hidden bg-slate-50/70 p-3 space-y-3">
+              <p className="text-xs font-semibold text-slate-500 px-1">{filteredLeads.length} {filteredLeads.length === 1 ? 'lead' : 'leads'}</p>
+              {filteredLeads.length === 0 && <div className="py-10 text-center text-slate-500 text-sm">No leads found matching your criteria.</div>}
+              {filteredLeads.map(lead => (
+                <div key={lead.id} className={`bg-white rounded-2xl shadow-sm border border-slate-200 border-l-4 overflow-hidden ${lead.conversionStatus === 'Converted' ? 'border-l-emerald-500' : lead.conversionStatus === 'Not Converted' ? 'border-l-rose-400' : 'border-l-indigo-400'}`}>
+                  <div className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-11 h-11 shrink-0 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg">{(lead.name || '?').charAt(0).toUpperCase()}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">{lead.name}</p>
+                        <p className="text-sm text-slate-500 flex items-center mt-0.5"><Phone className="w-3 h-3 mr-1" />{lead.phone}</p>
+                      </div>
+                      <Badge status={lead.conversionStatus} />
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {lead.category && <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">{lead.category}{lead.product ? ' · ' + lead.product : ''}</span>}
+                      {lead.enquiryDate && <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs flex items-center"><Calendar className="w-3 h-3 mr-1" />{lead.enquiryDate}</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-100">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Call / Visit</p>
+                        <div className="flex flex-col items-start gap-1"><Badge status={lead.callStatus} /><Badge status={lead.visitedStatus} /></div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Expected Buy</p>
+                        <p className="text-sm font-medium text-slate-800">{lead.expectedBuyDate || '-'}</p>
+                        {lead.conversionStatus === 'Converted' && lead.buyingWhen && <p className="text-xs text-emerald-600 font-medium mt-1">When: {lead.buyingWhen}</p>}
+                      </div>
+                    </div>
+                    {isAdmin && <div className="mt-3 text-xs text-indigo-700 font-medium bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 flex items-center"><UserPlus className="w-3 h-3 mr-1.5" />{users.find(u => u.id === lead.assignedTo)?.name || 'Unassigned'}</div>}
+                  </div>
+                  <div className="flex border-t border-slate-100 bg-slate-50/70 divide-x divide-slate-100 text-sm font-medium">
+                    <a href={`tel:${lead.phone}`} className="flex-1 py-3 flex items-center justify-center text-emerald-600 active:bg-emerald-50"><Phone className="w-4 h-4 mr-1.5" />Call</a>
+                    <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><MsgIcon className="w-4 h-4 mr-1.5" />WhatsApp</a>
+                    <button aria-label="View lead" onClick={() => setViewingLead(lead)} className="flex-1 py-3 flex items-center justify-center text-blue-600 active:bg-blue-50"><Eye className="w-4 h-4" /></button>
+                    <button aria-label="Edit lead" onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="flex-1 py-3 flex items-center justify-center text-indigo-600 active:bg-indigo-50"><Edit2 className="w-4 h-4" /></button>
+                    {isAdmin && <button aria-label="Assign lead" onClick={() => setAssigningLead(lead)} className="flex-1 py-3 flex items-center justify-center text-amber-600 active:bg-amber-50"><UserPlus className="w-4 h-4" /></button>}
+                    {isAdmin && <button aria-label="Delete lead" onClick={() => onDelete(lead.id)} className="flex-1 py-3 flex items-center justify-center text-red-600 active:bg-red-50"><Trash2 className="w-4 h-4" /></button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block overflow-x-auto custom-scrollbar">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                  <tr><th className="p-4">Customer</th><th className="p-4">Category</th><th className="p-4">Status & Action</th><th className="p-4">Expected Buying Date</th><th className="p-4">Final Outcome</th><th className="p-4 text-right">Actions</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredLeads.length > 0 ? filteredLeads.map((lead, index) => (
+                    <tr key={lead.id} className="hover:bg-slate-50 transition-colors duration-150 animate-slide-up" style={{ animationDelay: `${Math.min(index * 0.05, 0.5)}s` }}>
+                      <td className="p-4 align-top"><div className="font-medium text-slate-900">{lead.name}</div><div className="text-slate-500 text-xs flex items-center mt-1"><Phone className="w-3 h-3 mr-1" /> {lead.phone}</div></td>
+                      <td className="p-4 align-top"><span className="text-slate-700 font-medium">{lead.category || '-'}</span>{lead.product && <span className="text-slate-500 text-xs ml-1">({lead.product})</span>}<div className="text-slate-500 text-xs flex items-center mt-1"><Calendar className="w-3 h-3 mr-1" /> {lead.enquiryDate}</div>{lead.reference && (<div className="text-indigo-500 text-xs mt-1 font-medium flex items-center">Ref: {lead.reference}</div>)}</td>
+                      <td className="p-4 align-top">
+                        <div className="flex flex-col items-start gap-1.5">
+                          <Badge status={lead.callStatus} />
+                          <Badge status={lead.visitedStatus} />
+                        </div>
+                        {isAdmin && (
+                          <div className="text-xs text-indigo-600 font-medium mt-2 p-1.5 bg-indigo-50 rounded border border-indigo-100 flex items-center">
+                             <UserPlus className="w-3 h-3 mr-1"/> {users.find(u => u.id === lead.assignedTo)?.name || 'Unassigned'}
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-4 align-top">{lead.expectedBuyDate ? (<div className="text-slate-700 font-medium flex items-center"><Calendar className="w-3 h-3 mr-1 text-slate-400" />{lead.expectedBuyDate}</div>) : (<span className="text-slate-400">-</span>)}{lead.buyingConfirmation === 'Yes' && lead.buyingWhen && (<div className="text-indigo-600 text-xs mt-1 font-medium truncate max-w-[150px]" title={lead.buyingWhen}>Timeline: {lead.buyingWhen}</div>)}</td>
+                      <td className="p-4 align-top"><div className="flex flex-col items-start gap-1.5"><Badge status={lead.conversionStatus} />{lead.conversionStatus === 'Converted' && lead.buyingWhen && (<div className="text-xs text-emerald-600 font-medium">When: {lead.buyingWhen}</div>)}{lead.conversionStatus === 'Not Converted' && lead.notBuyingReason && (<div className="text-xs text-red-500 truncate max-w-[150px]" title={lead.notBuyingReason}>Why: {lead.notBuyingReason}</div>)}</div></td>
+                      <td className="p-4 text-right align-top">
+                        <div className="flex justify-end items-start">
+                          <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors mr-1 inline-flex" title="Send WhatsApp welcome message"><MsgIcon className="w-4 h-4" /></a>
+                          <button onClick={() => setViewingLead(lead)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors mr-1" title="View Lead"><Eye className="w-4 h-4" /></button>
+                          <button onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors mr-1" title="Edit Status"><Edit2 className="w-4 h-4" /></button>
+                          {/* Restricted Actions */}
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => setAssigningLead(lead)} className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors mr-1" title="Assign Lead"><UserPlus className="w-4 h-4" /></button>
+                              <button onClick={() => onDelete(lead.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Lead"><Trash2 className="w-4 h-4" /></button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )) : (<tr><td colSpan="6" className="p-8 text-center text-slate-500">No leads found matching your criteria.</td></tr>)}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          {isFormOpen && <LeadFormModal lead={editingLead} leads={leads} categories={categories} references={references} onClose={() => setIsFormOpen(false)} onSave={handleSave} />}
+          {isBulkAssignOpen && <BulkAssignModal leads={leads} users={users} onClose={() => setIsBulkAssignOpen(false)} onSave={(updatedLeads) => { onBulkUpdate(updatedLeads); setIsBulkAssignOpen(false); }} />}
+          {viewingLead && <LeadViewModal lead={viewingLead} onClose={() => setViewingLead(null)} />}
+          {assigningLead && <AssignLeadModal lead={assigningLead} users={users} onClose={() => setAssigningLead(null)} onSave={handleAssignSave} />}
+        </div>
+      );
+    }
+
+    function UserFormModal({ user, onClose, onSave }) {
+      const [formData, setFormData] = useState(user || {
+        name: '', phone: '', address: '', loginId: '', password: '', role: 'user'
+      });
+      const [errors, setErrors] = useState({});
+
+      const generatePassword = () => {
+        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+        let pass = "";
+        for (let i = 0; i < 10; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
+        setFormData(prev => ({ ...prev, password: pass }));
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!formData.name || !formData.loginId || (!user && !formData.password)) {
+          setErrors({ form: "Name, Login ID, and Password are required." });
+          return;
+        }
+        onSave({ ...formData, id: formData.id || `user-${Date.now()}`, lastModified: Date.now() });
+      };
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col animate-pop-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><UserPlus className="w-5 h-5 text-indigo-500" />{user ? 'Edit User' : 'Add New User'}</h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6">
+              <form id="userForm" onSubmit={handleSubmit} className="space-y-4">
+                {errors.form && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{errors.form}</div>}
+                <Input label="Full Name" name="name" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} required placeholder="e.g. Rahul Sharma" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input label="Contact Number" name="phone" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} placeholder="e.g. 9876543210" />
+                  <Select label="Role" name="role" value={formData.role} onChange={(e) => setFormData({...formData, role: e.target.value})} options={[{label:'Admin', value:'admin'}, {label:'User', value:'user'}]} />
+                </div>
+                <Input label="Address" name="address" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} placeholder="Location / HQ" />
+                <div className="pt-4 border-t border-slate-100">
+                   <Input label="Login ID (Email/Username)" name="loginId" value={formData.loginId} onChange={(e) => setFormData({...formData, loginId: e.target.value})} required placeholder="e.g. rahul@company.com" />
+                </div>
+                <div>
+                  <div className="flex justify-between items-end mb-1.5">
+                    <label className="text-sm font-medium text-slate-700">Password <span className="text-red-500">*</span></label>
+                    <button type="button" onClick={generatePassword} className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">Generate Strong</button>
+                  </div>
+                  <input type="text" placeholder={user ? "Leave blank to keep current password" : ""} value={formData.password || ''} onChange={(e) => setFormData({...formData, password: e.target.value})} className="w-full px-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white" required placeholder="Create password" />
+                </div>
+              </form>
+            </div>
+            <div className="p-5 border-t border-slate-200 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="submit" form="userForm">{user ? 'Update User' : 'Create User'}</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function UserManagementView({ users, categories, references, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser }) {
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [editingUser, setEditingUser] = useState(null);
+
+      const handleSave = (userData) => {
+        if (editingUser) onUpdateUser(userData);
+        else onAddUser(userData);
+        setIsModalOpen(false);
+      };
+
+      const handleGenerateAccessCard = (user) => {
+        // Core Security Logic: Stamping the generated card so old ones expire
+        const updatedUser = { ...user, lastModified: Date.now() };
+        onUpdateUser(updatedUser); // Update system memory
+        
+        const data = { type: 'LEADMASTER_ACCESS_CARD', version: '1.0', user: updatedUser, categories, references };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+        const dlNode = document.createElement('a');
+        dlNode.setAttribute("href", dataStr);
+        dlNode.setAttribute("download", `AccessCard_${user.name.replace(/\s+/g, '_')}.json`);
+        document.body.appendChild(dlNode);
+        dlNode.click();
+        dlNode.remove();
+        showToast(`Access Card downloaded for ${user.name}`, 'success');
+      };
+
+      return (
+        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
+          <div className="flex flex-wrap gap-3 justify-between items-center">
+             <div><h2 className="text-xl font-bold text-slate-800">User Management</h2><p className="text-slate-500 text-sm">Manage team access and generate secure login cards.</p></div>
+             <Button onClick={() => {setEditingUser(null); setIsModalOpen(true);}} icon={Plus}>Add New User</Button>
+          </div>
+          <Card className="flex-1 overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+               <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                  <tr><th className="p-4">User Info</th><th className="p-4">Role</th><th className="p-4">Contact</th><th className="p-4">Login ID</th><th className="p-4 text-right">Actions</th></tr>
+               </thead>
+               <tbody className="divide-y divide-slate-100">
+                 {users.map((user, i) => (
+                    <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4"><div className="font-medium text-slate-900">{user.name}</div><div className="text-xs text-slate-500">{user.address || '-'}</div></td>
+                      <td className="p-4"><Badge status={user.role} /></td>
+                      <td className="p-4"><div className="flex items-center text-slate-700"><Phone className="w-3 h-3 mr-1 text-slate-400"/>{user.phone || '-'}</div></td>
+                      <td className="p-4 text-indigo-600 font-medium">{user.loginId}</td>
+                      <td className="p-4 text-right">
+                         <div className="flex items-center justify-end gap-2">
+                           <Button variant="secondary" onClick={() => handleGenerateAccessCard(user)} icon={Key} className="py-1.5 px-3 text-xs bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200">Access Card</Button>
+                           <button onClick={() => {setEditingUser(user); setIsModalOpen(true);}} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
+                           <button onClick={() => onDeleteUser(user.id)} disabled={user.id === currentUser.id} className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-30"><Trash2 className="w-4 h-4" /></button>
+                         </div>
+                      </td>
+                    </tr>
+                 ))}
+               </tbody>
+            </table>
+          </Card>
+          {isModalOpen && <UserFormModal user={editingUser} onClose={() => setIsModalOpen(false)} onSave={handleSave} />}
+        </div>
+      );
+    }
+
+    function BackupView({ leads, users, categories, references, tasks, onImport, showToast, currentUser }) {
+      const isAdmin = currentUser.role === 'admin';
+      const fileInputRef = useRef(null);
+
+      const handleExport = () => {
+        try {
+          const exportLeads = isAdmin ? leads : leads.filter(l => l.assignedTo === currentUser.id);
+          const exportUsers = isAdmin ? users : [currentUser]; // Normal user only exports their own identity safely
+          const exportTasks = isAdmin ? tasks : tasks.filter(t => t.assignedTo === currentUser.id);
+
+          const exportData = { 
+            type: 'LEADMASTER_BACKUP', 
+            version: '1.1', 
+            isAdminExport: isAdmin, // Tagging this as the Master Database
+            leads: exportLeads, 
+            users: exportUsers,
+            categories,
+            references,
+            tasks: exportTasks
+          };
+          if (window.AndroidBridge && window.AndroidBridge.saveTextFile) {
+            const fname = isAdmin ? `LeadMaster_Admin_Backup_${new Date().toISOString().split('T')[0]}.json` : `LeadMaster_MyLeads_${new Date().toISOString().split('T')[0]}.json`;
+            window.AndroidBridge.saveTextFile(fname, JSON.stringify(exportData, null, 2));
+            return; // the app shows its own 'Saved to Downloads' message
+          }
+          const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+          const dlNode = document.createElement('a'); 
+          dlNode.setAttribute("href", dataStr); 
+          const filename = isAdmin ? `LeadMaster_Admin_Backup_${new Date().toISOString().split('T')[0]}.json` : `LeadMaster_MyLeads_${new Date().toISOString().split('T')[0]}.json`;
+          dlNode.setAttribute("download", filename);
+          document.body.appendChild(dlNode); 
+          dlNode.click(); 
+          dlNode.remove();
+          showToast('Backup successfully downloaded!', 'success');
+        } catch (error) { showToast('Failed to generate backup.', 'error'); }
+      };
+
+      const handleFileChange = (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = JSON.parse(event.target.result);
+            if (data.type === 'LEADMASTER_BACKUP' && data.leads) {
+              onImport(data.leads, data.users || [], !!data.isAdminExport, data.categories, data.references, data.tasks || []);
+            } else if (Array.isArray(data)) {
+               onImport(data, [], false, null, null, []); // Legacy support
+            } else { showToast('Invalid format. File must be a LeadMaster backup.', 'error'); }
+          } catch (error) { showToast('Error parsing file.', 'error'); }
+          e.target.value = null;
+        };
+        reader.readAsText(file);
+      };
+
+      return (
+        <div className="h-full flex flex-col space-y-6 animate-slide-up">
+          <div><h2 className="text-xl font-bold text-slate-800">System Backup & Restore</h2><p className="text-slate-500 mt-1">Export your data for safekeeping, or import an existing JSON backup.</p></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+            <Card className="p-8 text-center flex flex-col items-center justify-center space-y-4">
+              <div className="p-4 bg-indigo-50 text-indigo-600 rounded-full mb-2"><Download className="w-8 h-8" /></div>
+              <h3 className="text-lg font-semibold text-slate-800">{isAdmin ? "Export Full Database" : "Export My Leads"}</h3>
+              <p className="text-sm text-slate-500 max-w-sm mb-6">{isAdmin ? "Download a complete backup of all your leads and user accounts." : "Download a backup of leads assigned specifically to you."}</p>
+              <Button onClick={handleExport} icon={Download} className="w-full sm:w-auto px-8">Download Backup</Button>
+            </Card>
+            <Card className="p-8 text-center flex flex-col items-center justify-center space-y-4">
+              <div className="p-4 bg-emerald-50 text-emerald-600 rounded-full mb-2"><Upload className="w-8 h-8" /></div>
+              <h3 className="text-lg font-semibold text-slate-800">{isAdmin ? "Restore System" : "Import Assigned Leads"}</h3>
+              <p className="text-sm text-slate-500 max-w-sm mb-6">{isAdmin ? "Restore leads and users from a previously downloaded backup file." : "Merge assigned leads from an Admin backup file into your local system."}</p>
+              <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+              <Button onClick={() => fileInputRef.current?.click()} icon={Upload} variant="secondary" className="w-full sm:w-auto px-8 text-emerald-700 hover:bg-emerald-50 border-emerald-200">Upload Backup File</Button>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    function TaskFormModal({ task, users, onClose, onSave, currentUser }) {
+      const [formData, setFormData] = useState(task || {
+        title: '', description: '', assignedTo: '', dueDate: '', status: 'Pending', assignedBy: currentUser.id
+      });
+      const [errors, setErrors] = useState({});
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!formData.title || !formData.assignedTo) {
+          setErrors({ form: "Title and Assignee are required." });
+          return;
+        }
+        onSave({ ...formData, id: formData.id || `task-${Date.now()}`, createdAt: formData.createdAt || new Date().toISOString() });
+      };
+
+      const userOptions = users.map(u => ({ value: u.id, label: u.name }));
+
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col animate-pop-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><ClipboardList className="w-5 h-5 text-indigo-500" />{task ? 'Edit Task' : 'Assign New Task'}</h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6">
+              <form id="taskForm" onSubmit={handleSubmit} className="space-y-4">
+                {errors.form && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{errors.form}</div>}
+                <Input label="Task Title" name="title" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} required placeholder="e.g. Follow up with 10 leads" />
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-1.5 block">Description</label>
+                  <textarea name="description" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm custom-scrollbar" rows="3" placeholder="Task details..."></textarea>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Select label="Assign To" name="assignedTo" value={formData.assignedTo} onChange={(e) => setFormData({...formData, assignedTo: e.target.value})} options={userOptions} required className="bg-white" />
+                  <Input type="date" label="Due Date" name="dueDate" value={formData.dueDate} onChange={(e) => setFormData({...formData, dueDate: e.target.value})} />
+                </div>
+              </form>
+            </div>
+            <div className="p-5 border-t border-slate-200 flex justify-end gap-3 bg-slate-50 rounded-b-2xl">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button type="submit" form="taskForm">{task ? 'Update Task' : 'Create Task'}</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TasksView({ tasks, users, currentUser, onAddTask, onUpdateTask, onDeleteTask }) {
+      const isAdmin = currentUser.role === 'admin';
+      const [isFormOpen, setIsFormOpen] = useState(false);
+      const [editingTask, setEditingTask] = useState(null);
+      const [filterStatus, setFilterStatus] = useState('All');
+
+      const viewableTasks = isAdmin ? tasks : tasks.filter(t => t.assignedTo === currentUser.id);
+      const filteredTasks = viewableTasks.filter(t => filterStatus === 'All' || t.status === filterStatus);
+
+      const handleStatusChange = (task, newStatus) => {
+        let updatedTask = { ...task, status: newStatus };
+        if (newStatus === 'Pending Approval' || newStatus === 'Completed') updatedTask.completedAt = new Date().toISOString();
+        if (newStatus === 'Approved') updatedTask.approvedAt = new Date().toISOString();
+        if (newStatus === 'Pending') { updatedTask.completedAt = null; updatedTask.approvedAt = null; } 
+        onUpdateTask(updatedTask);
+      };
+
+      return (
+        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
+          <div className="flex flex-wrap gap-3 justify-between items-center">
+            <div>
+               <h2 className="text-xl font-bold text-slate-800">Task Management</h2>
+               <p className="text-slate-500 text-sm">{isAdmin ? 'Assign and approve tasks for the team.' : 'Manage your assigned tasks.'}</p>
+            </div>
+            {isAdmin && <Button onClick={() => {setEditingTask(null); setIsFormOpen(true);}} icon={Plus}>Assign New Task</Button>}
+          </div>
+          
+          <Card className="flex-1 flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex gap-4 bg-white items-center">
+               <div className="relative w-48"><select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full pl-3 pr-8 py-2 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm bg-white"><option value="All">All Tasks</option><option value="Pending">Pending</option><option value="Pending Approval">Pending Approval</option><option value="Approved">Approved</option></select><ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" /></div>
+               <span className="text-sm font-medium text-slate-500">Total: {filteredTasks.length}</span>
+            </div>
+            <div className="overflow-x-auto custom-scrollbar flex-1">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr><th className="p-4">Task Details</th><th className="p-4">Assigned To</th><th className="p-4">Due Date</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-slate-100">
+                   {filteredTasks.length > 0 ? filteredTasks.map(task => {
+                     const assignedUser = users.find(u => u.id === task.assignedTo)?.name || 'Unknown';
+                     return (
+                      <tr key={task.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 whitespace-normal min-w-[200px]">
+                          <div className="font-medium text-slate-900">{task.title}</div>
+                          <div className="text-xs text-slate-500 mt-1 max-w-sm">{task.description}</div>
+                        </td>
+                        <td className="p-4"><div className="flex items-center text-slate-700"><UserPlus className="w-4 h-4 mr-2 text-indigo-400"/>{assignedUser}</div></td>
+                        <td className="p-4"><div className="flex items-center text-slate-700"><Calendar className="w-4 h-4 mr-2 text-slate-400"/>{task.dueDate || '-'}</div></td>
+                        <td className="p-4"><Badge status={task.status} /></td>
+                        <td className="p-4 text-right">
+                           <div className="flex items-center justify-end gap-2">
+                             {task.status === 'Pending' && !isAdmin && (
+                               <Button variant="secondary" onClick={() => handleStatusChange(task, 'Pending Approval')} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50 py-1.5 px-3 text-xs" icon={CheckSquare}>Complete Task</Button>
+                             )}
+                             {task.status === 'Pending Approval' && isAdmin && (
+                               <Button onClick={() => handleStatusChange(task, 'Approved')} className="bg-emerald-600 hover:bg-emerald-700 py-1.5 px-3 text-xs" icon={CheckCircle}>Approve</Button>
+                             )}
+                             {isAdmin && (
+                               <>
+                                 <button onClick={() => {setEditingTask(task); setIsFormOpen(true);}} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="Edit Task"><Edit2 className="w-4 h-4" /></button>
+                                 <button onClick={() => onDeleteTask(task.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Delete Task"><Trash2 className="w-4 h-4" /></button>
+                               </>
+                             )}
+                           </div>
+                        </td>
+                      </tr>
+                     )
+                   }) : <tr><td colSpan="5" className="p-8 text-center text-slate-500">No tasks found.</td></tr>}
+                 </tbody>
+              </table>
+            </div>
+          </Card>
+          
+          {isFormOpen && <TaskFormModal task={editingTask} users={users} currentUser={currentUser} onClose={() => setIsFormOpen(false)} onSave={(data) => { editingTask ? onUpdateTask(data) : onAddTask(data); setIsFormOpen(false); }} />}
+        </div>
+      );
+    }
+
+    function ProductivityView({ tasks, users }) {
+      const [selectedUserId, setSelectedUserId] = useState(users.length > 0 ? users[0].id : '');
+
+      const monthlyData = useMemo(() => {
+        if (!selectedUserId) return [];
+        const userTasks = tasks.filter(t => t.assignedTo === selectedUserId);
+        const months = {};
+
+        userTasks.forEach(task => {
+          const date = new Date(task.createdAt || Date.now());
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          if (!months[monthKey]) months[monthKey] = { name: monthKey, Assigned: 0, Completed: 0, Approved: 0 };
+          
+          months[monthKey].Assigned += 1;
+          if (task.status === 'Completed' || task.status === 'Pending Approval' || task.status === 'Approved') {
+            months[monthKey].Completed += 1;
+          }
+          if (task.status === 'Approved') {
+             months[monthKey].Approved += 1;
+          }
+        });
+        
+        return Object.values(months).sort((a,b) => a.name.localeCompare(b.name)).map(m => {
+           const prodPct = m.Assigned > 0 ? Math.round((m.Completed / m.Assigned) * 100) : 0;
+           return { ...m, Productivity: prodPct, monthLabel: new Date(m.name + '-01').toLocaleString('default', { month: 'short', year: 'numeric' }) };
+        });
+      }, [tasks, selectedUserId]);
+
+      const totalAssigned = monthlyData.reduce((sum, d) => sum + d.Assigned, 0);
+      const totalCompleted = monthlyData.reduce((sum, d) => sum + d.Completed, 0);
+      const overallProd = totalAssigned > 0 ? Math.round((totalCompleted / totalAssigned) * 100) : 0;
+
+      return (
+        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-6 animate-slide-up">
+          <div className="flex flex-wrap gap-3 justify-between items-center">
+             <div>
+                <h2 className="text-xl font-bold text-slate-800">Productivity Analytics</h2>
+                <p className="text-slate-500 text-sm">Measure task completion and team efficiency over time.</p>
+             </div>
+             <div className="w-full sm:w-64">
+               <Select label="" name="userSelect" value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} options={users.map(u => ({value: u.id, label: u.name}))} />
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+             <Card className="p-6">
+               <p className="text-sm font-medium text-slate-500">Total Assigned Tasks</p>
+               <h3 className="text-3xl font-bold text-slate-800 mt-2">{totalAssigned}</h3>
+             </Card>
+             <Card className="p-6">
+               <p className="text-sm font-medium text-slate-500">Total Completed</p>
+               <h3 className="text-3xl font-bold text-emerald-600 mt-2">{totalCompleted}</h3>
+             </Card>
+             <Card className="p-6">
+               <p className="text-sm font-medium text-slate-500">Overall Productivity %</p>
+               <h3 className="text-3xl font-bold text-indigo-600 mt-2">{overallProd}%</h3>
+             </Card>
+          </div>
+
+          <Card className="p-6 flex-1 min-h-[300px]">
+            <h3 className="text-lg font-semibold text-slate-800 mb-6 flex items-center"><Activity className="w-5 h-5 mr-2 text-indigo-500" /> Monthly Performance Breakdown</h3>
+            {monthlyData.length > 0 ? (
+              <div className="h-full max-h-[350px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="monthLabel" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} />
+                    <RechartsTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                    <Legend />
+                    <Bar dataKey="Assigned" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Completed" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Approved" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-500">No task data available for this user.</div>
+            )}
+          </Card>
+        </div>
+      );
+    }
+
+    function ProductFormModal({ product, onClose, onSave }) {
+      const [form, setForm] = useState(() => ({
+        name: product ? product.name : '', description: product ? product.description : '',
+        price: product ? product.price : '', active: product ? product.active : true
+      }));
+      const [images, setImages] = useState(product ? product.images : []);
+      const [removedPaths, setRemovedPaths] = useState([]);
+      const [newFiles, setNewFiles] = useState([]);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const fileRef = useRef(null);
+      const MAX_PHOTOS = 6;
+      const total = images.length + newFiles.length;
+      useEffect(() => () => newFiles.forEach(f => URL.revokeObjectURL(f.preview)), []);
+
+      const addFiles = (e) => {
+        const picked = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
+        const room = MAX_PHOTOS - total;
+        if (picked.length > room) setError('You can add up to ' + MAX_PHOTOS + ' photos per product.');
+        setNewFiles(prev => [...prev, ...picked.slice(0, Math.max(0, room)).map(file => ({ file, preview: URL.createObjectURL(file) }))]);
+        e.target.value = '';
+      };
+      const removeExisting = (img) => { setImages(prev => prev.filter(i => i !== img)); if (img.path) setRemovedPaths(prev => [...prev, img.path]); };
+      const removeNew = (nf) => { URL.revokeObjectURL(nf.preview); setNewFiles(prev => prev.filter(f => f !== nf)); };
+
+      const submit = async (e) => {
+        e.preventDefault();
+        if (!form.name.trim()) { setError('Product name is required.'); return; }
+        setSaving(true); setError('');
+        try {
+          await onSave({ id: product ? product.id : null, sort_order: product ? product.sort_order : null, ...form, images, removedPaths, newFiles: newFiles.map(f => f.file) });
+          onClose();
+        } catch (err) { setError(err.message || String(err)); setSaving(false); }
+      };
+      const inp = 'w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-pop-in flex flex-col max-h-[92vh] my-2">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <h2 className="text-lg font-semibold text-slate-800">{product ? 'Edit Product' : 'Add Product'}</h2>
+              <button type="button" onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-100">{error}</div>}
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Product Name *</label><input autoFocus value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Dell Latitude 5490 (Imported)" className={inp} /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Description</label><textarea rows="4" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="i5 8th Gen, 8GB RAM, 256GB SSD, 1 Year Warranty" className={inp} /></div>
+              <div><label className="block text-sm font-medium text-slate-700 mb-1">Price</label><input value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="e.g. 18999  or  15,000 onwards" className={inp} /><p className="text-xs text-slate-400 mt-1">Numbers get a ₹ sign automatically.</p></div>
+              <div>
+                <div className="flex items-center justify-between mb-2"><label className="text-sm font-medium text-slate-700">Photos</label><span className="text-xs text-slate-400">{total}/{MAX_PHOTOS}</span></div>
+                <div className="grid grid-cols-3 gap-2">
+                  {images.map((img, i) => (
+                    <div key={'e' + i} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                      <img src={img.url} alt="" className="w-full h-full object-cover" />
+                      <button type="button" onClick={() => removeExisting(img)} aria-label="Remove photo" className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center"><X className="w-4 h-4" /></button>
+                    </div>
+                  ))}
+                  {newFiles.map((nf, i) => (
+                    <div key={'n' + i} className="relative aspect-square rounded-xl overflow-hidden border-2 border-indigo-200 bg-slate-50">
+                      <img src={nf.preview} alt="" className="w-full h-full object-cover" />
+                      <span className="absolute bottom-1 left-1 text-[10px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded">NEW</span>
+                      <button type="button" onClick={() => removeNew(nf)} aria-label="Remove photo" className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center"><X className="w-4 h-4" /></button>
+                    </div>
+                  ))}
+                  {total < MAX_PHOTOS && (
+                    <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="aspect-square rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-indigo-400 hover:text-indigo-600 flex flex-col items-center justify-center text-xs font-medium">
+                      <Plus className="w-6 h-6 mb-1" />Upload Photos
+                    </button>
+                  )}
+                </div>
+                <input ref={fileRef} type="file" accept="image/*" multiple onChange={addFiles} className="hidden" />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 rounded" />Send this product in the WhatsApp message</label>
+            </div>
+            <div className="flex gap-2 justify-end p-4 border-t border-slate-100">
+              <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Product'}</Button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    function ProductCatalogueSection({ products, onSaveProduct, onDeleteProduct }) {
+      const [editing, setEditing] = useState(null); // null = closed, {} = new, product = edit
+      return (
+        <div className="md:col-span-2 space-y-4">
+          <div className="flex items-center justify-between border-b pb-2 gap-3">
+            <h3 className="font-semibold text-slate-700">Product Catalogue <span className="text-slate-400 font-normal text-sm">({products.length})</span></h3>
+            <Button onClick={() => setEditing({})} icon={Plus}>Add Product</Button>
+          </div>
+          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. In the Android app their photos are attached too; in a browser each product's first photo is sent as a link.</p>
+          {products.length === 0 && <div className="text-sm text-slate-400 text-center py-6 border border-dashed border-slate-200 rounded-xl">No products yet. Click "Add Product" to create your catalogue.</div>}
+          <div className="space-y-2">
+            {products.map(p => (
+              <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-xl border border-slate-200 bg-white">
+                <div className="w-14 h-14 shrink-0 rounded-lg overflow-hidden bg-slate-100 flex items-center justify-center text-slate-400 text-xs">
+                  {p.images[0] ? <img src={p.images[0].url} alt="" className="w-full h-full object-cover" /> : 'No photo'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-slate-800 truncate">{p.name}</p>
+                  <p className="text-sm text-indigo-600 font-semibold">{fmtPrice(p.price) || '—'} <span className="text-xs text-slate-400 font-normal ml-1">{p.images.length} photo{p.images.length === 1 ? '' : 's'}</span></p>
+                  {!p.active && <span className="inline-block mt-0.5 text-[10px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Not sent</span>}
+                </div>
+                <button onClick={() => setEditing(p)} aria-label="Edit product" className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
+                <button onClick={() => onDeleteProduct(p)} aria-label="Delete product" className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            ))}
+          </div>
+          {editing && <ProductFormModal product={editing.id ? editing : null} onClose={() => setEditing(null)} onSave={onSaveProduct} />}
+        </div>
+      );
+    }
+
+    function SettingsModal({ categories, references, waSettings, onSaveWa, products, onSaveProduct, onDeleteProduct, onClose, onAddCategory, onDeleteCategory, onAddReference, onDeleteReference }) {
+      const [newCat, setNewCat] = useState(''); const [newRef, setNewRef] = useState('');
+      const [wa, setWa] = useState(() => normalizeWaSettings(waSettings));
+      const inp = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+      return (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl animate-pop-in flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100"><h2 className="text-lg font-semibold text-slate-800">System Settings</h2><button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button></div>
+            <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-4"><h3 className="font-semibold text-slate-700 border-b pb-2">Manage Categories</h3><div className="flex gap-2"><input type="text" value={newCat} onChange={e => setNewCat(e.target.value)} placeholder="New Category Name" className="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" onKeyPress={e => e.key === 'Enter' && newCat.trim() && (onAddCategory(newCat.trim()), setNewCat(''))}/><Button onClick={() => { if(newCat.trim()) { onAddCategory(newCat.trim()); setNewCat(''); } }}>Add</Button></div><div className="max-h-60 overflow-y-auto border border-slate-100 rounded-lg custom-scrollbar">{categories.map((cat, i) => (<div key={i} className="flex items-center justify-between p-3 border-b border-slate-100 last:border-0 hover:bg-slate-50"><span className="text-sm font-medium text-slate-700">{cat}</span><button onClick={() => onDeleteCategory(cat)} className="text-red-500 hover:text-red-700 p-1"><Trash2 className="w-4 h-4" /></button></div>))}</div></div>
+              <div className="space-y-4"><h3 className="font-semibold text-slate-700 border-b pb-2">Manage References</h3><div className="flex gap-2"><input type="text" value={newRef} onChange={e => setNewRef(e.target.value)} placeholder="New Reference Name" className="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" onKeyPress={e => e.key === 'Enter' && newRef.trim() && (onAddReference(newRef.trim()), setNewRef(''))}/><Button onClick={() => { if(newRef.trim()) { onAddReference(newRef.trim()); setNewRef(''); } }}>Add</Button></div><div className="max-h-60 overflow-y-auto border border-slate-100 rounded-lg custom-scrollbar">{references.map((refItem, i) => (<div key={i} className="flex items-center justify-between p-3 border-b border-slate-100 last:border-0 hover:bg-slate-50"><span className="text-sm font-medium text-slate-700">{refItem}</span><button onClick={() => onDeleteReference(refItem)} className="text-red-500 hover:text-red-700 p-1"><Trash2 className="w-4 h-4" /></button></div>))}</div></div>
+              <div className="md:col-span-2 space-y-4">
+                <h3 className="font-semibold text-slate-700 border-b pb-2">WhatsApp Welcome Message</h3>
+                <p className="text-xs text-slate-500">When anyone (admin or team member) taps the WhatsApp button on a lead, this message, the catalogue link and the location link open in a chat with that customer, ready to send. Type <b>{'{name}'}</b> to insert the customer's name.</p>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Welcome Message</label><textarea rows="5" value={wa.welcome} onChange={e => setWa({ ...wa, welcome: e.target.value })} placeholder="Hello {name}, thank you for your enquiry! ..." className={inp} /></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp Catalogue Link</label><input type="url" value={wa.catalogue} onChange={e => setWa({ ...wa, catalogue: e.target.value })} placeholder="https://wa.me/c/91XXXXXXXXXX" className={inp} /></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1">Google Maps Link</label><input type="url" value={wa.maps} onChange={e => setWa({ ...wa, maps: e.target.value })} placeholder="https://maps.app.goo.gl/..." className={inp} /></div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Open WhatsApp on computers using</label>
+                  <select value={wa.mode} onChange={e => setWa({ ...wa, mode: e.target.value })} className={inp}>
+                    <option value="auto">Automatic (WhatsApp asks: app or WhatsApp Web)</option>
+                    <option value="web">WhatsApp Web directly (web.whatsapp.com)</option>
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1.5">Phones always open the WhatsApp app. If the message does not appear typed in on your computer, try the other option. Very long messages may not pre-fill, so the full message is also copied each time (press Ctrl+V).</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex items-start gap-2 text-sm text-slate-700 p-3 rounded-lg border border-slate-200"><input type="checkbox" checked={wa.sendProducts} onChange={e => setWa({ ...wa, sendProducts: e.target.checked })} className="w-4 h-4 mt-0.5 rounded" /><span>Include product catalogue (name, price, description, photos) in the message</span></label>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp app in the Android APK</label>
+                    <select value={wa.androidApp} onChange={e => setWa({ ...wa, androidApp: e.target.value })} className={inp}>
+                      <option value="auto">Automatic (WhatsApp Business if installed)</option>
+                      <option value="business">WhatsApp Business</option>
+                      <option value="personal">WhatsApp</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end"><Button onClick={() => onSaveWa(wa)}>Save WhatsApp Settings</Button></div>
+              </div>
+              <ProductCatalogueSection products={products} onSaveProduct={onSaveProduct} onDeleteProduct={onDeleteProduct} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [currentUser, setCurrentUser] = useState(null);
+      
+      const [users, setUsers] = useState([]);
+      const [leads, setLeads] = useState([]);
+      const [categories, setCategories] = useState(dummyCategories);
+      const [references, setReferences] = useState(dummyReferences);
+      const [tasks, setTasks] = useState([]);
+      const [loaded, setLoaded] = useState(false);
+      const [waSettings, setWaSettings] = useState(() => normalizeWaSettings({}));
+      const [products, setProducts] = useState([]);
+      const synced = useRef({ leads: new Map(), tasks: new Map(), categories: '', references: '', whatsapp: '' });
+
+      const [currentView, setCurrentView] = useState('dashboard');
+      const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+      const [toast, setToast] = useState({ message: '', type: '', isExiting: false });
+
+      const loadProducts = async () => {
+        const { data, error } = await sb.from('products').select('*');
+        if (!error && data) setProducts(sortProducts(data.map(normalizeProduct)));
+      };
+
+      // ---- Load everything from Supabase ----
+      const loadAll = async (authUser) => {
+        const [p, l, t, s] = await Promise.all([
+          sb.from('profiles').select('*'), sb.from('leads').select('*'),
+          sb.from('tasks').select('*'), sb.from('settings').select('*')
+        ]);
+        const err = p.error || l.error || t.error || s.error;
+        if (err) { showToast('Could not load data: ' + err.message, 'error'); return false; }
+        const me = p.data.find(x => x.auth_id === authUser.id);
+        if (!me) { showToast('No profile found for this account.', 'error'); await sb.auth.signOut(); return false; }
+        const L = l.data.map(r => r.data), T = t.data.map(r => r.data);
+        const cat = normalizeStringList((s.data.find(r => r.key === 'categories') || {}).value, dummyCategories);
+        const ref = normalizeStringList((s.data.find(r => r.key === 'references') || {}).value, dummyReferences);
+        const waRaw = (s.data.find(r => r.key === 'whatsapp') || {}).value;
+        const waObj = normalizeWaSettings(waRaw);
+        synced.current = {
+          leads: new Map(L.map(o => [String(o.id), JSON.stringify(o)])),
+          tasks: new Map(T.map(o => [String(o.id), JSON.stringify(o)])),
+          categories: JSON.stringify(cat), references: JSON.stringify(ref), whatsapp: JSON.stringify(waObj)
+        };
+        setUsers(p.data.map(profileToUser));
+        setLeads(L.sort((a, b) => b.id - a.id)); setTasks(T.sort((a, b) => String(b.id).localeCompare(String(a.id))));
+        setCategories(cat); setReferences(ref); setWaSettings(waObj);
+        loadProducts();
+        setCurrentUser(profileToUser(me)); setCurrentView('dashboard'); setLoaded(true);
+        return profileToUser(me);
+      };
+
+      // ---- Push changes to Supabase (diff against last synced snapshot) ----
+      const syncTable = async (table, items) => {
+        const prev = synced.current[table], next = new Map(items.map(o => [String(o.id), JSON.stringify(o)]));
+        const up = items.filter(o => prev.get(String(o.id)) !== next.get(String(o.id)));
+        const del = [...prev.keys()].filter(k => !next.has(k));
+        synced.current[table] = next;
+        if (up.length) { const { error } = await sb.from(table).upsert(up.map(o => rowOf(table, o))); if (error) showToast('Save failed: ' + error.message, 'error'); }
+        if (del.length) { const { error } = await sb.from(table).delete().in('id', del); if (error) showToast('Delete failed: ' + error.message, 'error'); }
+      };
+      const syncSetting = async (key, value) => {
+        const str = JSON.stringify(value);
+        if (synced.current[key] === str) return;
+        synced.current[key] = str;
+        const { error } = await sb.from('settings').upsert({ key, value }); if (error) showToast('Save failed: ' + error.message, 'error');
+      };
+      useEffect(() => { if (loaded) syncTable('leads', leads); }, [leads, loaded]);
+      useEffect(() => { if (loaded) syncTable('tasks', tasks); }, [tasks, loaded]);
+      useEffect(() => { if (loaded && currentUser && currentUser.role === 'admin') syncSetting('categories', categories); }, [categories, loaded]);
+      useEffect(() => { if (loaded && currentUser && currentUser.role === 'admin') syncSetting('references', references); }, [references, loaded]);
+      useEffect(() => { if (loaded && currentUser && currentUser.role === 'admin') syncSetting('whatsapp', waSettings); }, [waSettings, loaded]);
+
+      // ---- Live updates from other users (Supabase Realtime) ----
+      useEffect(() => {
+        if (!loaded) return;
+        const applyRow = (table, setter, p) => {
+          const sync = synced.current[table];
+          if (p.eventType === 'DELETE') {
+            const id = String(p.old.id); sync.delete(id);
+            setter(prev => prev.filter(o => String(o.id) !== id));
+            return;
+          }
+          const obj = p.new.data, id = String(p.new.id), str = JSON.stringify(obj);
+          if (sync.get(id) === str) return;
+          sync.set(id, str);
+          setter(prev => prev.some(o => String(o.id) === id) ? prev.map(o => String(o.id) === id ? obj : o) : [obj, ...prev]);
+        };
+        const ch = sb.channel('leadmaster-live')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, p => applyRow('leads', setLeads, p))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, p => applyRow('tasks', setTasks, p))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => {
+            if (!p.new || !p.new.key) return;
+            const key = p.new.key;
+            let value = p.new.value;
+            if (key === 'categories') value = normalizeStringList(value, dummyCategories);
+            else if (key === 'references') value = normalizeStringList(value, dummyReferences);
+            else if (key === 'whatsapp') value = normalizeWaSettings(value);
+            else return;
+            const str = JSON.stringify(value);
+            if (synced.current[key] === str) return;
+            synced.current[key] = str;
+            if (key === 'categories') setCategories(value);
+            else if (key === 'references') setReferences(value);
+            else if (key === 'whatsapp') setWaSettings(value);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => { loadProducts(); })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
+            const { data } = await sb.from('profiles').select('*');
+            if (data) setUsers(data.map(profileToUser));
+          })
+          .subscribe();
+        return () => { sb.removeChannel(ch); };
+      }, [loaded]);
+
+      const [menuOpen, setMenuOpen] = useState(false);
+      useEffect(() => { setMenuOpen(false); }, [currentView]);
+
+      // Refresh shared settings (message, links, categories) when the tab is opened/revisited and every minute
+      useEffect(() => {
+        if (!loaded) return;
+        const apply = (key, raw) => {
+          let value = raw;
+          if (key === 'categories') value = normalizeStringList(raw, dummyCategories);
+          else if (key === 'references') value = normalizeStringList(raw, dummyReferences);
+          else if (key === 'whatsapp') value = normalizeWaSettings(raw);
+          else return;
+          const str = JSON.stringify(value);
+          if (synced.current[key] === str) return;
+          synced.current[key] = str;
+          if (key === 'categories') setCategories(value); else if (key === 'references') setReferences(value); else setWaSettings(value);
+        };
+        const refresh = async () => {
+          if (document.hidden) return;
+          const { data } = await sb.from('settings').select('*');
+          if (data) data.forEach(r => apply(r.key, r.value));
+          loadProducts();
+        };
+        refresh();
+        const t = setInterval(refresh, 60000);
+        document.addEventListener('visibilitychange', refresh); window.addEventListener('focus', refresh);
+        return () => { clearInterval(t); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh); };
+      }, [loaded]);
+
+      // Restore session on refresh
+      useEffect(() => {
+        sb.auth.getSession().then(({ data }) => { if (data.session) loadAll(data.session.user); });
+      }, []);
+
+      const showToast = (message, type = 'success') => {
+        setToast({ message, type, isExiting: false });
+        setTimeout(() => {
+          setToast(prev => ({ ...prev, isExiting: true }));
+          setTimeout(() => setToast({ message: '', type: '', isExiting: false }), 300);
+        }, 3000);
+      };
+
+      const handleLogin = async (loginId, password) => {
+        let { data, error } = await sb.auth.signInWithPassword({ email: toEmail(loginId), password });
+        if (error && loginId.trim().toLowerCase() === initialAdmin.loginId.toLowerCase()) {
+          // First-time setup: creates the owner admin account if the system is still empty
+          try { await adminCall({ action: 'bootstrap', profile: { ...initialAdmin, loginId: loginId.trim(), password: undefined }, password }); } catch (e) { /* already set up */ }
+          ({ data, error } = await sb.auth.signInWithPassword({ email: toEmail(loginId), password }));
+        }
+        if (error) { showToast('Invalid Login ID or Password.', 'error'); return; }
+        const u = await loadAll(data.user);
+        if (u) showToast(`Welcome back, ${u.name}!`, 'success');
+      };
+
+      const handleImportCredentialsLogin = (importedUser, importedCategories, importedReferences) => {
+        showToast('Access Cards are replaced by cloud login. Please sign in with your ID and password.', 'error'); return;
+        // Core Security Logic: Validate Timestamp
+        const existingUser = users.find(u => u.id === importedUser.id);
+        if (existingUser) {
+          const existingTime = existingUser.lastModified || 0;
+          const importedTime = importedUser.lastModified || 0;
+          
+          if (importedTime < existingTime) {
+            showToast('This Access Card has expired. Please use your most recent one.', 'error');
+            return;
+          }
+        }
+
+        // Apply Valid Credentials
+        setUsers(prev => {
+          const existingUserIndex = prev.findIndex(u => u.id === importedUser.id);
+          if (existingUserIndex >= 0) {
+            const updatedUsers = [...prev];
+            updatedUsers[existingUserIndex] = importedUser;
+            return updatedUsers;
+          }
+          return [...prev, importedUser];
+        });
+        
+        if (importedCategories && importedCategories.length > 0) setCategories(importedCategories);
+        if (importedReferences && importedReferences.length > 0) setReferences(importedReferences);
+        
+        setCurrentUser(importedUser);
+        setCurrentView('dashboard');
+        showToast(`Access Card accepted! Welcome ${importedUser.name}.`, 'success');
+      };
+
+      const handleLogout = async () => { await sb.auth.signOut(); setLoaded(false); setCurrentUser(null); setLeads([]); setTasks([]); setUsers([]); setProducts([]); showToast('You have been logged out.', 'success'); };
+
+      // Data Handlers
+      const stripPw = (u) => { const { password, ...rest } = u; return rest; };
+      const handleAddUser = async (user) => {
+        try { await adminCall({ action: 'create', profile: stripPw(user), password: user.password }); setUsers(prev => [...prev, stripPw(user)]); showToast('User created successfully.', 'success'); }
+        catch (e) { showToast('Could not create user: ' + e.message, 'error'); }
+      };
+      const handleUpdateUser = async (updatedUser) => {
+        try { await adminCall({ action: 'update', profile: stripPw(updatedUser), password: updatedUser.password || undefined }); setUsers(prev => prev.map(u => u.id === updatedUser.id ? stripPw(updatedUser) : u)); showToast('User updated successfully.', 'success'); }
+        catch (e) { showToast('Could not update user: ' + e.message, 'error'); }
+      };
+      const handleDeleteUser = async (id) => {
+        if (id === currentUser.id) { showToast('You cannot delete your own account.', 'error'); return; }
+        try { await adminCall({ action: 'delete', id }); setUsers(prev => prev.filter(u => u.id !== id)); showToast('User deleted.', 'error'); }
+        catch (e) { showToast('Could not delete user: ' + e.message, 'error'); }
+      };
+
+      const handleAddLead = (newLead) => { setLeads([newLead, ...leads]); showToast('New lead saved.', 'success'); };
+      const handleUpdateLead = (updatedLead) => { setLeads(leads.map(l => l.id === updatedLead.id ? updatedLead : l)); showToast('Lead updated.', 'success'); };
+      const handleBulkUpdateLeads = (updatedLeadsArray) => {
+        setLeads(prev => {
+          const newLeads = [...prev];
+          updatedLeadsArray.forEach(ul => {
+            const idx = newLeads.findIndex(l => l.id === ul.id);
+            if (idx > -1) newLeads[idx] = ul;
+          });
+          return newLeads;
+        });
+        showToast(`${updatedLeadsArray.length} leads assigned successfully.`, 'success');
+      };
+      const handleDeleteLead = (id) => { setLeads(leads.filter(l => l.id !== id)); showToast('Lead deleted.', 'error'); };
+      
+      // Task Handlers
+      const handleAddTask = (newTask) => { setTasks([newTask, ...tasks]); showToast('New task created.', 'success'); };
+      const handleUpdateTask = (updatedTask) => { setTasks(tasks.map(t => t.id === updatedTask.id ? updatedTask : t)); showToast('Task updated.', 'success'); };
+      const handleDeleteTask = (id) => { setTasks(tasks.filter(t => t.id !== id)); showToast('Task deleted.', 'error'); };
+      
+      // Sync Logic specifically dealing with missing/deleted leads!
+      const handleImportLeads = (importedLeads, importedUsers, isAdminExport = false, importedCategories = null, importedReferences = null, importedTasks = []) => {
+        setLeads(prevLeads => {
+          const importedLeadIds = new Set(importedLeads.map(l => l.id));
+          const prevLeadIds = new Set(prevLeads.map(l => l.id)); // Track what the local device currently has
+          const leadMap = new Map();
+
+          prevLeads.forEach(l => {
+            // Master Delete Synchronization: If an Admin exported this, and the local lead isn't in it, delete it locally.
+            if (isAdminExport && !importedLeadIds.has(l.id)) return; 
+            leadMap.set(l.id, l);
+          });
+
+          importedLeads.forEach(il => {
+            // Security: Users only import leads assigned to them.
+            if (currentUser.role !== 'admin' && il.assignedTo !== currentUser.id) return; 
+
+            // ANTI-GHOST FIX: If Admin is importing a User's backup, IGNORE leads that the Admin already deleted!
+            // Since users cannot create leads, any lead the user has that the admin DOESN'T have must be dead.
+            if (currentUser.role === 'admin' && !isAdminExport && !prevLeadIds.has(il.id)) return;
+
+            leadMap.set(il.id, il);
+          });
+          return Array.from(leadMap.values()).sort((a,b) => b.id - a.id);
+        });
+
+        if (currentUser.role === 'admin' && importedUsers && importedUsers.length > 0) {
+          setUsers(prevUsers => {
+            const userMap = new Map();
+            const importedUserIds = new Set(importedUsers.map(u => u.id));
+            
+            prevUsers.forEach(u => {
+              if (isAdminExport && !importedUserIds.has(u.id)) {
+                 if (u.id === currentUser.id) userMap.set(u.id, u); // Prevent suicide
+                 return;
+              }
+              userMap.set(u.id, u);
+            });
+
+            importedUsers.forEach(iu => userMap.set(iu.id, iu));
+            return Array.from(userMap.values());
+          });
+        }
+        
+        if (isAdminExport) {
+          if (Array.isArray(importedCategories) && importedCategories.length > 0) setCategories(normalizeStringList(importedCategories, categories));
+          if (Array.isArray(importedReferences) && importedReferences.length > 0) setReferences(normalizeStringList(importedReferences, references));
+        }
+
+        // Sync Tasks
+        setTasks(prevTasks => {
+          const taskMap = new Map();
+          const prevTaskIds = new Set(prevTasks.map(t => t.id));
+          const importedTaskIds = new Set(importedTasks.map(t => t.id));
+
+          prevTasks.forEach(t => {
+            if (isAdminExport && !importedTaskIds.has(t.id)) return;
+            taskMap.set(t.id, t);
+          });
+
+          importedTasks.forEach(it => {
+            if (currentUser.role !== 'admin' && it.assignedTo !== currentUser.id) return;
+            if (currentUser.role === 'admin' && !isAdminExport && !prevTaskIds.has(it.id)) return; // anti-ghost sync
+            taskMap.set(it.id, it);
+          });
+          return Array.from(taskMap.values()).sort((a,b) => b.id - a.id);
+        });
+
+        showToast('System data restored & synced securely!', 'success');
+        setCurrentView('leads');
+      };
+
+      const handleSaveProduct = async (draft) => {
+        const id = draft.id || ('prod-' + Date.now());
+        const uploaded = [];
+        try {
+          for (const file of draft.newFiles) {
+            const blob = await compressImage(file);
+            const path = id + '/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.jpg';
+            const { error } = await sb.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000', upsert: false });
+            if (error) throw new Error('Photo upload failed: ' + error.message);
+            uploaded.push({ url: sb.storage.from('product-images').getPublicUrl(path).data.publicUrl, path });
+          }
+          const row = { id, name: draft.name.trim(), description: draft.description.trim(), price: String(draft.price || '').trim(),
+            images: [...draft.images, ...uploaded], active: !!draft.active, sort_order: draft.sort_order != null ? draft.sort_order : Date.now() };
+          const { error } = await sb.from('products').upsert(row);
+          if (error) throw new Error(error.message);
+          if (draft.removedPaths.length) await sb.storage.from('product-images').remove(draft.removedPaths);
+          setProducts(prev => sortProducts([...prev.filter(p => p.id !== id), normalizeProduct(row)]));
+          showToast(draft.id ? 'Product updated.' : 'Product added.', 'success');
+        } catch (err) {
+          if (uploaded.length) await sb.storage.from('product-images').remove(uploaded.map(u => u.path));
+          throw err;
+        }
+      };
+      const handleDeleteProduct = async (p) => {
+        if (!window.confirm('Delete "' + p.name + '" and its photos?')) return;
+        const { error } = await sb.from('products').delete().eq('id', p.id);
+        if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
+        const paths = p.images.map(i => i.path).filter(Boolean);
+        if (paths.length) await sb.storage.from('product-images').remove(paths);
+        setProducts(prev => prev.filter(x => x.id !== p.id));
+        showToast('Product deleted.', 'error');
+      };
+      const handleSaveWa = (wa) => { setWaSettings(wa); showToast('WhatsApp settings saved.', 'success'); };
+      const handleAddCategory = (cat) => { setCategories([...categories, cat]); showToast(`Category added.`, 'success'); };
+      const handleDeleteCategory = (cat) => { setCategories(categories.filter(c => c !== cat)); showToast(`Category removed.`, 'error'); };
+      const handleAddReference = (refItem) => { setReferences([...references, refItem]); showToast(`Reference added.`, 'success'); };
+      const handleDeleteReference = (refItem) => { setReferences(references.filter(r => r !== refItem)); showToast(`Reference removed.`, 'error'); };
+
+      if (!currentUser) {
+        return (
+          <>
+            <Toast {...toast} />
+            <LoginView onLogin={handleLogin} onImportLogin={handleImportCredentialsLogin} showToast={showToast} />
+          </>
+        );
+      }
+
+      const isAdmin = currentUser.role === 'admin';
+
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-900">
+          <Toast {...toast} />
+          <div className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-slate-900 text-white px-4 py-3 shadow-lg" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+            <button onClick={() => setMenuOpen(true)} aria-label="Open menu" className="p-2 -ml-2 rounded-lg hover:bg-slate-800">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
+            <span className="font-bold tracking-tight flex-1">LeadMaster</span>
+            <span className="text-xs text-slate-400 truncate max-w-[40%]">{currentUser.name}</span>
+          </div>
+          {menuOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setMenuOpen(false)} />}
+          <div className={`fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-slate-900 text-slate-300 flex flex-col z-50 transition-transform duration-200 md:sticky md:top-0 md:h-screen md:w-64 md:max-w-none md:shrink-0 md:translate-x-0 ${menuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className="p-6">
+              <h1 className="text-2xl font-bold text-white flex items-center tracking-tight"><TrendingUp className="w-6 h-6 mr-2 text-indigo-400" /> LeadMaster</h1>
+              <div className="mt-4 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700 flex items-center">
+                 <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold mr-3">{currentUser.name.charAt(0)}</div>
+                 <div className="flex-1 overflow-hidden"><p className="text-sm font-medium text-white truncate">{currentUser.name}</p><p className="text-xs text-slate-400 capitalize">{currentUser.role}</p></div>
+              </div>
+            </div>
+            
+            <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto custom-scrollbar">
+              <button onClick={() => setCurrentView('dashboard')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><LayoutDashboard className="w-5 h-5 mr-3" /><span className="font-medium">Dashboard</span></button>
+              <button onClick={() => setCurrentView('leads')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'leads' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5 mr-3" /><span className="font-medium">Lead Manager</span></button>
+              <button onClick={() => setCurrentView('tasks')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'tasks' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><ClipboardList className="w-5 h-5 mr-3" /><span className="font-medium">Tasks</span></button>
+              
+              {isAdmin && (
+                <>
+                  <div className="pt-4 pb-1"><p className="px-4 text-xs font-bold uppercase tracking-wider text-slate-500">Admin Tools</p></div>
+                  <button onClick={() => setCurrentView('users')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'users' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><UserPlus className="w-5 h-5 mr-3" /><span className="font-medium">User Management</span></button>
+                  <button onClick={() => setCurrentView('productivity')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'productivity' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><Activity className="w-5 h-5 mr-3" /><span className="font-medium">Productivity Analytics</span></button>
+                </>
+              )}
+              
+              <div className="pt-4 pb-1"><p className="px-4 text-xs font-bold uppercase tracking-wider text-slate-500">System Tools</p></div>
+              <button onClick={() => setCurrentView('backup')} className={`w-full flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${currentView === 'backup' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'hover:bg-slate-800 hover:text-white'}`}><Database className="w-5 h-5 mr-3" /><span className="font-medium">Backup Data</span></button>
+            </nav>
+
+            <div className="p-4 mt-auto border-t border-slate-800 space-y-2">
+              {isAdmin && <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl transition-all duration-200"><Settings className="w-5 h-5 mr-3" /><span className="font-medium">Settings</span></button>}
+              <button onClick={handleLogout} className="w-full flex items-center px-4 py-3 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-xl transition-all duration-200"><LogOut className="w-5 h-5 mr-3" /><span className="font-medium">Log Out</span></button>
+            </div>
+            <div className="p-4 bg-slate-950/50 text-center text-xs border-t border-slate-800/60 pb-6 md:pb-4"><p className="text-slate-400">Powered By <span className="text-indigo-400 font-semibold">NexGen Softwares</span></p><p className="text-slate-500 mt-1">Vinayak Gosavi - <a href="tel:9156103714" className="hover:text-indigo-300 transition-colors">9156103714</a></p></div>
+          </div>
+
+          {}
+          <div className="flex-1 p-4 md:p-8 overflow-y-auto w-full custom-scrollbar">
+            {currentView === 'dashboard' ? (
+              <div className="max-w-7xl mx-auto"><div className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Dashboard Overview</h2><p className="text-slate-500 mt-1">Track your campaign progress and conversion rates.</p></div><DashboardView leads={leads} currentUser={currentUser} /></div>
+            ) : currentView === 'leads' ? (
+              <div className="max-w-7xl mx-auto h-full"><LeadsManagerView waSettings={waSettings} products={products} showToast={showToast} leads={leads} categories={categories} references={references} onAdd={handleAddLead} onUpdate={handleUpdateLead} onBulkUpdate={handleBulkUpdateLeads} onDelete={handleDeleteLead} currentUser={currentUser} users={users} /></div>
+            ) : currentView === 'users' && isAdmin ? (
+              <div className="max-w-7xl mx-auto h-full"><UserManagementView users={users} categories={categories} references={references} onAddUser={handleAddUser} onUpdateUser={handleUpdateUser} onDeleteUser={handleDeleteUser} showToast={showToast} currentUser={currentUser} /></div>
+            ) : currentView === 'tasks' ? (
+              <div className="max-w-7xl mx-auto h-full"><TasksView tasks={tasks} users={users} currentUser={currentUser} onAddTask={handleAddTask} onUpdateTask={handleUpdateTask} onDeleteTask={handleDeleteTask} /></div>
+            ) : currentView === 'productivity' && isAdmin ? (
+              <div className="max-w-7xl mx-auto h-full"><ProductivityView tasks={tasks} users={users} /></div>
+            ) : currentView === 'backup' ? (
+              <div className="max-w-7xl mx-auto h-full"><BackupView leads={leads} users={users} categories={categories} references={references} tasks={tasks} onImport={handleImportLeads} showToast={showToast} currentUser={currentUser} /></div>
+            ) : null}
+          </div>
+          {isSettingsOpen && isAdmin && (<SettingsModal categories={categories} references={references} waSettings={waSettings} onSaveWa={handleSaveWa} products={products} onSaveProduct={handleSaveProduct} onDeleteProduct={handleDeleteProduct} onClose={() => setIsSettingsOpen(false)} onAddCategory={handleAddCategory} onDeleteCategory={handleDeleteCategory} onAddReference={handleAddReference} onDeleteReference={handleDeleteReference} />)}
+        </div>
+      );
+    }
+
+    class ErrorBoundary extends React.Component {
+      constructor(p) { super(p); this.state = { err: null }; }
+      static getDerivedStateFromError(err) { return { err }; }
+      render() {
+        if (this.state.err) return (<div style={{ padding: 24, fontFamily: 'sans-serif' }}><h2 style={{ fontWeight: 700 }}>Something went wrong</h2><pre style={{ whiteSpace: 'pre-wrap', color: '#b91c1c', margin: '12px 0' }}>{String((this.state.err && this.state.err.message) || this.state.err)}</pre><button onClick={() => location.reload()} style={{ padding: '8px 16px', background: '#4f46e5', color: '#fff', borderRadius: 8 }}>Reload</button></div>);
+        return this.props.children;
+      }
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ErrorBoundary><App /></ErrorBoundary>);
+  </script>
+</body>
+</html>

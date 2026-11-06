@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+}
+
+def buildNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
+
+android {
+    namespace 'com.nexgen.leadmaster'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.nexgen.leadmaster'
+        minSdk 26
+        targetSdk 34
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
+    }
+
+    // Signing key comes from the KEYSTORE_BASE64 GitHub secret (the workflow writes it to
+    // leadmaster-release.jks). Never commit the .jks file - this repository is public.
+    // Without the secret the APK is signed with a temporary debug key (works, but each new
+    // build must be installed fresh instead of as an update).
+    def releaseKey = file('leadmaster-release.jks')
+    signingConfigs {
+        if (releaseKey.exists()) {
+            release {
+                storeFile releaseKey
+                storeType 'pkcs12'
+                storePassword System.getenv('KEYSTORE_PASSWORD') ?: 'leadmaster2026'
+                keyAlias 'leadmaster'
+                keyPassword System.getenv('KEYSTORE_PASSWORD') ?: 'leadmaster2026'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig releaseKey.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    // The web app (../../web/index.html) is packaged into the APK as assets/index.html
+    sourceSets {
+        main {
+            assets.srcDir '../../web'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'androidx.core:core:1.13.1'
+}

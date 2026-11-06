@@ -1,0 +1,10 @@
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+.idea/
+.DS_Store
+*.jks
+*.keystore
+KEYSTORE_BASE64.txt
