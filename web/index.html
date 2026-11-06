@@ -295,7 +295,7 @@
     };
     // Android app (APK): sends the message + product photos straight into the customer's WhatsApp chat.
     // Browser: the chat link pre-fills the message (photos as links); the full text is also copied as a backup.
-    const sendWa = (lead, wa, toast, products) => (e) => {
+    const sendWa = (lead, wa, toast, products, openDialog) => (e) => {
       if (isNativeApp() && window.AndroidBridge.sendWhatsAppSequence) {
         e.preventDefault();
         const plan = buildWaPlan(lead, wa, products);
@@ -314,14 +314,52 @@
         } catch (err) { if (toast) toast('Could not open WhatsApp: ' + err.message, 'error'); }
         return;
       }
+      if (openDialog && productsToSend(wa, products).some(p => p.images.length)) {
+        e.preventDefault();
+        openDialog(lead);
+        return;
+      }
       const text = buildWaText(lead, wa, products, { photoLinks: true });
       if (!text) return;
       const ok = copyText(text);
       if (ok && toast) toast('Message copied. If it is not typed in the chat, just paste it (Ctrl+V, or long-press then Paste).', 'success');
     };
+    const isMobileUA = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/i.test(navigator.platform));
+    const collageCells = (n, W, GAP) => {
+      if (n === 2) { const c = Math.floor((W - GAP) / 2); return { H: c, cells: [[0, 0, c, c], [c + GAP, 0, W - c - GAP, c]] }; }
+      if (n === 3) { const top = Math.floor(W * 2 / 3), c = Math.floor((W - GAP) / 2); return { H: top + GAP + c, cells: [[0, 0, W, top], [0, top + GAP, c, c], [c + GAP, top + GAP, W - c - GAP, c]] }; }
+      if (n === 4) { const c = Math.floor((W - GAP) / 2), cells = []; for (let r = 0; r < 2; r++) for (let k = 0; k < 2; k++) cells.push([k * (c + GAP), r * (c + GAP), c, c]); return { H: 2 * c + GAP, cells }; }
+      if (n === 5) { const c3 = Math.floor((W - 2 * GAP) / 3), c2 = Math.floor((W - GAP) / 2); const cells = [[0, 0, c2, c3], [c2 + GAP, 0, W - c2 - GAP, c3]]; for (let k = 0; k < 3; k++) cells.push([k * (c3 + GAP), c3 + GAP, c3, c3]); return { H: 2 * c3 + GAP, cells }; }
+      const c = Math.floor((W - 2 * GAP) / 3), cells = []; for (let r = 0; r < 2; r++) for (let k = 0; k < 3; k++) cells.push([k * (c + GAP), r * (c + GAP), c, c]); return { H: 2 * c + GAP, cells };
+    };
+    const canvasToBlob = (canvas, type, q) => new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Could not create picture')), type, q));
+    // All photos of one product → one picture (grid), so WhatsApp shows the details once below it
+    const buildCollageBlob = async (urls) => {
+      const bmps = (await Promise.all(urls.slice(0, 6).map(u => fetch(u, { mode: 'cors' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }).then(b => createImageBitmap(b)).catch(() => null)))).filter(Boolean);
+      if (!bmps.length) return null;
+      const W = 1440, GAP = 12, canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+      if (bmps.length === 1) {
+        const sc = Math.min(1, W / bmps[0].width); canvas.width = Math.round(bmps[0].width * sc); canvas.height = Math.round(bmps[0].height * sc);
+        ctx.drawImage(bmps[0], 0, 0, canvas.width, canvas.height);
+      } else {
+        const { H, cells } = collageCells(bmps.length, W, GAP);
+        canvas.width = W; canvas.height = H; ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+        bmps.forEach((b, i) => {
+          const [x, y, w, h] = cells[i], sc = Math.max(w / b.width, h / b.height), sw = w / sc, sh = h / sc;
+          ctx.drawImage(b, (b.width - sw) / 2, (b.height - sh) / 2, sw, sh, x, y, w, h);
+        });
+      }
+      bmps.forEach(b => { try { b.close(); } catch (e) {} });
+      return canvasToBlob(canvas, 'image/jpeg', 0.88);
+    };
+    const toPngBlob = async (blob) => {
+      const bmp = await createImageBitmap(blob), c = document.createElement('canvas');
+      c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0);
+      return canvasToBlob(c, 'image/png');
+    };
     const MsgIcon = ({ className }) => (<svg className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>);
     const rowOf = (table, o) => table === 'settings' ? o : ({ id: String(o.id), assigned_to: o.assignedTo ?? null, data: o });
-    const profileToUser = (p) => ({ ...p.data, id: p.id, role: p.role });
+    const profileToUser = (p) => ({ ...p.data, id: p.id, role: p.role, authId: p.auth_id });
     const adminCall = async (body) => {
       const { data, error } = await sb.functions.invoke('admin-users', { body });
       if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch (e) {} throw new Error(m); }
@@ -957,12 +995,110 @@
       );
     }
 
+    function WaSendDialog({ lead, wa, products, toast, onClose }) {
+      const plan = useMemo(() => buildWaPlan(lead, { ...wa, photoMode: 'collage' }, products), []);
+      const mobile = isMobileUA();
+      const canShareFiles = useMemo(() => {
+        try { return !!(navigator.share && navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'], { type: 'image/jpeg' })], 'x.jpg', { type: 'image/jpeg' })] })); } catch (e) { return false; }
+      }, []);
+      const canCopyImage = !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext);
+      const [pics, setPics] = useState({});
+      const [done, setDone] = useState({});
+      useEffect(() => {
+        let alive = true; const urls = [];
+        plan.forEach((st, i) => {
+          if (st.type !== 'images') return;
+          buildCollageBlob(st.images).then(b => {
+            if (!alive) return;
+            if (!b) { setPics(p => ({ ...p, [i]: { error: true } })); return; }
+            const url = URL.createObjectURL(b); urls.push(url);
+            setPics(p => ({ ...p, [i]: { blob: b, url } }));
+          }).catch(() => alive && setPics(p => ({ ...p, [i]: { error: true } })));
+        });
+        return () => { alive = false; urls.forEach(u => URL.revokeObjectURL(u)); };
+      }, []);
+      const mark = (i) => setDone(d => ({ ...d, [i]: true }));
+      const stepTitle = (st, i) => {
+        if (st.type === 'images') return (st.caption.split('\n')[0] || 'Product').replace(/\*/g, '');
+        if (i === 0 && welcomeText(lead, wa)) return 'Welcome message';
+        if (st.text === linksText(wa)) return 'Catalogue & location links';
+        return (st.text.split('\n')[0] || 'Message').replace(/\*/g, '');
+      };
+      const fileName = (st) => (stepTitle(st).replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'product') + '.jpg';
+      const openText = (i, text) => { window.open(waChatUrl(lead, text, wa.mode), '_blank', 'noopener'); mark(i); };
+      const copyStepText = (i, text) => { if (copyText(text)) toast('Copied. Paste it in the WhatsApp chat (Ctrl+V) and Send.', 'success'); mark(i); };
+      const sharePic = async (i, st) => {
+        try { await navigator.share({ files: [new File([pics[i].blob], fileName(st), { type: 'image/jpeg' })], text: st.caption }); mark(i); }
+        catch (e) { if (e && e.name !== 'AbortError') toast('Could not share: ' + e.message, 'error'); }
+      };
+      const copyPic = async (i) => {
+        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': toPngBlob(pics[i].blob) })]); toast('Photo copied. Press Ctrl+V in the WhatsApp chat, then add the details as caption.', 'success'); }
+        catch (e) { toast('Could not copy the photo: ' + e.message, 'error'); }
+      };
+      const btn = 'px-3 py-2 rounded-lg text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50';
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl animate-pop-in flex flex-col max-h-[94vh] my-2">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100">
+              <div><h2 className="text-lg font-semibold text-slate-800">Send to WhatsApp</h2><p className="text-xs text-slate-500">{lead.name} • {lead.phone}</p></div>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="px-4 pt-3 text-xs text-slate-600 bg-green-50 border-b border-green-100 pb-3">
+              {mobile && canShareFiles
+                ? <>Go step by step from the top. For a product, tap <b>Share photo</b> → choose <b>WhatsApp</b> → choose <b>{lead.name}</b> → Send. The photos and details go together, details only once.</>
+                : <>Step 1 opens the chat with this customer. For each product: <b>Copy photo</b> → press <b>Ctrl+V</b> in the chat → <b>Copy details</b> → <b>Ctrl+V</b> in the caption box → Send.</>}
+            </div>
+            <div className="p-4 space-y-3 overflow-y-auto">
+              {plan.map((st, i) => (
+                <div key={i} className={`rounded-xl border p-3 ${done[i] ? 'border-green-200 bg-green-50/50' : 'border-slate-200'}`}>
+                  <div className="flex items-start gap-3">
+                    <div className={`w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${done[i] ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-600'}`}>{done[i] ? '✓' : i + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-800 text-sm truncate">{stepTitle(st, i)}</p>
+                      {st.type === 'images' ? (
+                        <div className="mt-2">
+                          {pics[i] && pics[i].url ? <img src={pics[i].url} alt="" className="w-full max-h-56 object-contain rounded-lg bg-slate-50 border border-slate-100" />
+                            : <div className="h-24 rounded-lg bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center text-xs text-slate-400">{pics[i] && pics[i].error ? 'Photos could not be loaded' : 'Preparing photos…'}</div>}
+                          <p className="text-xs text-slate-500 mt-1.5 whitespace-pre-line line-clamp-3">{st.caption.replace(/\*/g, '')}</p>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {mobile && canShareFiles ? (
+                              <button disabled={!pics[i] || !pics[i].blob} onClick={() => sharePic(i, st)} className={btn + ' bg-green-600 text-white'}>Share photo</button>
+                            ) : (
+                              <>
+                                {canCopyImage && <button disabled={!pics[i] || !pics[i].blob} onClick={() => copyPic(i)} className={btn + ' bg-green-600 text-white'}>1. Copy photo</button>}
+                                <button onClick={() => copyStepText(i, st.caption)} className={btn + ' bg-slate-800 text-white'}>2. Copy details</button>
+                                {pics[i] && pics[i].url && <a href={pics[i].url} download={fileName(st)} className={btn + ' bg-slate-100 text-slate-700'}>Download photo</a>}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs text-slate-500 mt-1 whitespace-pre-line line-clamp-3">{st.text.replace(/\*/g, '')}</p>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            <button onClick={() => openText(i, st.text)} className={btn + ' bg-green-600 text-white'}><MsgIcon className="w-4 h-4" />Open in WhatsApp</button>
+                            {!mobile && <button onClick={() => copyStepText(i, st.text)} className={btn + ' bg-slate-100 text-slate-700'}>Copy text</button>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-slate-100 flex justify-end"><Button onClick={onClose}>Done</Button></div>
+          </div>
+        </div>
+      );
+    }
+
     function LeadsManagerView({ waSettings, products, showToast, leads, categories, references, onAdd, onUpdate, onBulkUpdate, onDelete, currentUser, users }) {
       const isAdmin = currentUser.role === 'admin';
       const [isFormOpen, setIsFormOpen] = useState(false); 
       const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
       const [editingLead, setEditingLead] = useState(null);
       const [viewingLead, setViewingLead] = useState(null); 
+      const [waDialogLead, setWaDialogLead] = useState(null);
       const [assigningLead, setAssigningLead] = useState(null);
       const [searchTerm, setSearchTerm] = useState('');
       const [filterStatus, setFilterStatus] = useState('All');
@@ -1111,7 +1247,7 @@
                   </div>
                   <div className="flex border-t border-slate-100 bg-slate-50/70 divide-x divide-slate-100 text-sm font-medium">
                     <a href={`tel:${lead.phone}`} className="flex-1 py-3 flex items-center justify-center text-emerald-600 active:bg-emerald-50"><Phone className="w-4 h-4 mr-1.5" />Call</a>
-                    <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><MsgIcon className="w-4 h-4 mr-1.5" />WhatsApp</a>
+                    <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products, setWaDialogLead)} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><MsgIcon className="w-4 h-4 mr-1.5" />WhatsApp</a>
                     <button aria-label="View lead" onClick={() => setViewingLead(lead)} className="flex-1 py-3 flex items-center justify-center text-blue-600 active:bg-blue-50"><Eye className="w-4 h-4" /></button>
                     <button aria-label="Edit lead" onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="flex-1 py-3 flex items-center justify-center text-indigo-600 active:bg-indigo-50"><Edit2 className="w-4 h-4" /></button>
                     {isAdmin && <button aria-label="Assign lead" onClick={() => setAssigningLead(lead)} className="flex-1 py-3 flex items-center justify-center text-amber-600 active:bg-amber-50"><UserPlus className="w-4 h-4" /></button>}
@@ -1145,7 +1281,7 @@
                       <td className="p-4 align-top"><div className="flex flex-col items-start gap-1.5"><Badge status={lead.conversionStatus} />{lead.conversionStatus === 'Converted' && lead.buyingWhen && (<div className="text-xs text-emerald-600 font-medium">When: {lead.buyingWhen}</div>)}{lead.conversionStatus === 'Not Converted' && lead.notBuyingReason && (<div className="text-xs text-red-500 truncate max-w-[150px]" title={lead.notBuyingReason}>Why: {lead.notBuyingReason}</div>)}</div></td>
                       <td className="p-4 text-right align-top">
                         <div className="flex justify-end items-start">
-                          <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors mr-1 inline-flex" title="Send WhatsApp welcome message"><MsgIcon className="w-4 h-4" /></a>
+                          <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products, setWaDialogLead)} target="_blank" rel="noopener noreferrer" className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors mr-1 inline-flex" title="Send WhatsApp welcome message"><MsgIcon className="w-4 h-4" /></a>
                           <button onClick={() => setViewingLead(lead)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors mr-1" title="View Lead"><Eye className="w-4 h-4" /></button>
                           <button onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors mr-1" title="Edit Status"><Edit2 className="w-4 h-4" /></button>
                           {/* Restricted Actions */}
@@ -1166,6 +1302,7 @@
           {isFormOpen && <LeadFormModal lead={editingLead} leads={leads} categories={categories} references={references} onClose={() => setIsFormOpen(false)} onSave={handleSave} />}
           {isBulkAssignOpen && <BulkAssignModal leads={leads} users={users} onClose={() => setIsBulkAssignOpen(false)} onSave={(updatedLeads) => { onBulkUpdate(updatedLeads); setIsBulkAssignOpen(false); }} />}
           {viewingLead && <LeadViewModal lead={viewingLead} onClose={() => setViewingLead(null)} />}
+          {waDialogLead && <WaSendDialog lead={waDialogLead} wa={waSettings} products={products} toast={showToast} onClose={() => setWaDialogLead(null)} />}
           {assigningLead && <AssignLeadModal lead={assigningLead} users={users} onClose={() => setAssigningLead(null)} onSave={handleAssignSave} />}
         </div>
       );
@@ -1233,6 +1370,10 @@
     function UserManagementView({ users, categories, references, onAddUser, onUpdateUser, onDeleteUser, showToast, currentUser }) {
       const [isModalOpen, setIsModalOpen] = useState(false);
       const [editingUser, setEditingUser] = useState(null);
+      const [clients, setClients] = useState([]);
+      useEffect(() => { sb.from('app_clients').select('*').then(({ data }) => { if (data) setClients(data); }); }, []);
+      const latestVersion = clients.reduce((m, c) => cmpVer(c.version, m) > 0 ? c.version : m, '0');
+      const ago = (t) => { const m = Math.round((Date.now() - new Date(t).getTime()) / 60000); return m < 1 ? 'now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago'; };
 
       const handleSave = (userData) => {
         if (editingUser) onUpdateUser(userData);
@@ -1265,7 +1406,7 @@
           <Card className="flex-1 overflow-x-auto custom-scrollbar">
             <table className="w-full text-left text-sm whitespace-nowrap">
                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                  <tr><th className="p-4">User Info</th><th className="p-4">Role</th><th className="p-4">Contact</th><th className="p-4">Login ID</th><th className="p-4 text-right">Actions</th></tr>
+                  <tr><th className="p-4">User Info</th><th className="p-4">Role</th><th className="p-4">Contact</th><th className="p-4">Login ID</th><th className="p-4">App Version</th><th className="p-4 text-right">Actions</th></tr>
                </thead>
                <tbody className="divide-y divide-slate-100">
                  {users.map((user, i) => (
@@ -1274,6 +1415,14 @@
                       <td className="p-4"><Badge status={user.role} /></td>
                       <td className="p-4"><div className="flex items-center text-slate-700"><Phone className="w-3 h-3 mr-1 text-slate-400"/>{user.phone || '-'}</div></td>
                       <td className="p-4 text-indigo-600 font-medium">{user.loginId}</td>
+                      <td className="p-4"><div className="flex flex-col gap-1">
+                        {clients.filter(c => c.auth_id === user.authId).length === 0 && <span className="text-xs text-slate-400">Not seen yet</span>}
+                        {clients.filter(c => c.auth_id === user.authId).map(c => (
+                          <span key={c.platform} className={`text-xs font-medium px-2 py-0.5 rounded-full w-fit ${cmpVer(c.version, latestVersion) < 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                            {c.platform === 'android' ? '📱 App' : '💻 Browser'} v{c.version} · {ago(c.last_seen)}{cmpVer(c.version, latestVersion) < 0 ? ' · old' : ''}
+                          </span>
+                        ))}
+                      </div></td>
                       <td className="p-4 text-right">
                          <div className="flex items-center justify-end gap-2">
                            <Button variant="secondary" onClick={() => handleGenerateAccessCard(user)} icon={Key} className="py-1.5 px-3 text-xs bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200">Access Card</Button>
@@ -2010,6 +2159,15 @@
       };
       const stampLead = (l) => ({ ...l, updatedBy: currentUser ? currentUser.id : null, updatedByName: currentUser ? currentUser.name : '', updatedAt: new Date().toISOString() });
 
+      useEffect(() => {
+        if (!loaded || APP_VERSION === 'dev') return;
+        sb.auth.getUser().then(({ data }) => {
+          if (!data || !data.user) return;
+          sb.from('app_clients').upsert({ auth_id: data.user.id, platform: isNativeApp() ? 'android' : 'browser', version: APP_VERSION,
+            user_agent: navigator.userAgent.slice(0, 300), last_seen: new Date().toISOString() }, { onConflict: 'auth_id,platform' }).then(() => {});
+        });
+      }, [loaded]);
+
       // Ask once for browser notification permission (web only; the Android app asks on its own)
       useEffect(() => {
         if (!loaded || isNativeApp() || !('Notification' in window) || Notification.permission !== 'default') return;
@@ -2022,9 +2180,15 @@
       useEffect(() => {
         if (APP_VERSION === 'dev') return;
         const pendingRaw = lsGet('lm_update_pending'), last = lsGet('lm_version');
-        if (pendingRaw && last && cmpVer(APP_VERSION, last) > 0) {
-          let notes = ''; try { notes = JSON.parse(pendingRaw).notes || ''; } catch (e) {}
+        if (last && cmpVer(APP_VERSION, last) > 0) {
+          let notes = ''; try { notes = JSON.parse(pendingRaw || '{}').notes || ''; } catch (e) {}
           setCongrats({ version: APP_VERSION, notes });
+          if (!notes) {
+            fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/tags/v' + APP_VERSION).then(r => r.ok ? r.json() : null).then(j => {
+              const body = (j && j.body) || '', k = body.indexOf('Change:');
+              if (k > -1) setCongrats(c => c ? { ...c, notes: body.slice(k + 7).trim() } : c);
+            }).catch(() => {});
+          }
         }
         lsSet('lm_update_pending', null); lsSet('lm_version', APP_VERSION);
         if (location.search.indexOf('lmv=') > -1) { try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {} }
@@ -2316,7 +2480,7 @@
             <button onClick={() => setMenuOpen(true)} aria-label="Open menu" className="p-2 -ml-2 rounded-lg hover:bg-slate-800">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
             </button>
-            <span className="font-bold tracking-tight flex-1">LeadMaster</span>
+            <span className="font-bold tracking-tight flex-1">LeadMaster <span className="text-[10px] font-medium text-slate-400 ml-1">v{APP_VERSION}</span></span>
             <span className="text-xs text-slate-400 truncate max-w-[40%]">{currentUser.name}</span>
           </div>
           {menuOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setMenuOpen(false)} />}
