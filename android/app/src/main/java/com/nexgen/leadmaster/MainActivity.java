@@ -7,6 +7,12 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Rect;
 import android.provider.Settings;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
@@ -49,6 +55,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -70,11 +77,18 @@ public class MainActivity extends Activity {
     /** Increase by 1 whenever this Java code / AndroidManifest changes. The GitHub build publishes it in
      *  update.json; if a newer release has a higher number the app downloads the new APK, otherwise it only
      *  downloads the new web app (instant update, no reinstall). */
-    public static final int NATIVE_VERSION = 2;
+    public static final int NATIVE_VERSION = 3;
     private static final String UPDATE_URL =
             "https://github.com/vinayakg820-arch/Lead-Management-/releases/latest/download/update.json";
     private static final String CHANNEL_ID = "lead_alerts";
     private volatile JSONObject pendingUpdate;
+
+    // WhatsApp step-by-step sending (welcome → each product → links)
+    private final ArrayList<Intent> waQueue = new ArrayList<>();
+    private int waIndex = 0;
+    private boolean waAwaitingReturn = false;
+    private boolean waLeftApp = false;
+    private volatile boolean waCancelled = false;
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
@@ -201,6 +215,30 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        if (waAwaitingReturn) waLeftApp = true;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (waAwaitingReturn && waLeftApp) {
+            waAwaitingReturn = false;
+            waLeftApp = false;
+            if (waCancelled || waIndex >= waQueue.size()) {
+                finishWaSequence(waCancelled ? "cancelled" : "done");
+            } else {
+                sendToJs("waNext", waIndex + "/" + waQueue.size());
+                mainHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() { launchNextWaStep(); }
+                }, 1800);
+            }
+        }
+    }
+
+    @Override
     public void onBackPressed() {
         if (webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
@@ -239,6 +277,26 @@ public class MainActivity extends Activity {
         public int nativeVersion() { return NATIVE_VERSION; }
 
         @JavascriptInterface
+        public void sendWhatsAppSequence(final String phone, final String stepsJson, final String appPref) {
+            waCancelled = false;
+            io.execute(new Runnable() {
+                @Override
+                public void run() { prepareWaSequence(phone, stepsJson, appPref); }
+            });
+        }
+
+        @JavascriptInterface
+        public void cancelWhatsAppSequence() {
+            waCancelled = true;
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (!waAwaitingReturn) finishWaSequence("cancelled");
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void checkForUpdate(final String currentWebVersion) {
             io.execute(new Runnable() {
                 @Override
@@ -261,6 +319,189 @@ public class MainActivity extends Activity {
                 public void run() { postNotification(title, body); }
             });
         }
+    }
+
+    // ---------------------------------------------------------------- WhatsApp sequence
+
+    /** Builds one WhatsApp share per step: text, or a product (photos + caption once). */
+    private void prepareWaSequence(String phone, String stepsJson, String appPref) {
+        final String pkg = pickWhatsApp(appPref);
+        if (pkg == null) {
+            toastFromBackground("WhatsApp is not installed on this phone");
+            sendToJs("waDone", "error:WhatsApp is not installed");
+            return;
+        }
+        final String jid = (phone == null ? "" : phone.replaceAll("[^0-9]", "")) + "@s.whatsapp.net";
+        final ArrayList<Intent> intents = new ArrayList<>();
+        try {
+            JSONArray steps = new JSONArray(stepsJson == null ? "[]" : stepsJson);
+            File dir = new File(getCacheDir(), "shared");
+            if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot create cache folder");
+            for (int i = 0; i < steps.length(); i++) {
+                if (waCancelled) { sendToJs("waDone", "cancelled"); return; }
+                JSONObject step = steps.getJSONObject(i);
+                String caption = step.optString("caption", step.optString("text", ""));
+                JSONArray urls = step.optJSONArray("images");
+                if ("images".equals(step.optString("type")) && urls != null && urls.length() > 0) {
+                    sendToJs("waProgress", "Preparing photos " + (i + 1) + "/" + steps.length());
+                    ArrayList<File> files = new ArrayList<>();
+                    for (int k = 0; k < urls.length() && k < 6; k++) {
+                        String url = urls.getString(k);
+                        File f = new File(dir, "p_" + md5(url) + ".jpg");
+                        if ((f.exists() && f.length() > 0) || download(url, f)) files.add(f);
+                    }
+                    if (files.isEmpty()) {
+                        if (!caption.isEmpty()) intents.add(textIntent(pkg, jid, caption));
+                        continue;
+                    }
+                    if (step.optBoolean("collage", true)) {
+                        File collage = files.size() == 1 ? files.get(0) : buildCollage(files, new File(dir, "c_" + md5(urls.toString()) + ".jpg"));
+                        intents.add(imageIntent(pkg, jid, java.util.Collections.singletonList(collage), caption));
+                    } else {
+                        intents.add(imageIntent(pkg, jid, files, caption));
+                    }
+                } else if (!caption.isEmpty()) {
+                    intents.add(textIntent(pkg, jid, caption));
+                }
+            }
+        } catch (Exception e) {
+            sendToJs("waDone", "error:" + e.getMessage());
+            return;
+        }
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                waQueue.clear();
+                waQueue.addAll(intents);
+                waIndex = 0;
+                if (waQueue.isEmpty()) finishWaSequence("done");
+                else launchNextWaStep();
+            }
+        });
+    }
+
+    private Intent textIntent(String pkg, String jid, String text) {
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TEXT, text);
+        i.putExtra("jid", jid);
+        i.setPackage(pkg);
+        return i;
+    }
+
+    private Intent imageIntent(String pkg, String jid, List<File> files, String caption) {
+        ArrayList<Uri> uris = new ArrayList<>();
+        for (File f : files) uris.add(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f));
+        Intent i;
+        if (uris.size() == 1) {
+            i = new Intent(Intent.ACTION_SEND);
+            i.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+        } else {
+            i = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            i.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        }
+        i.setType("image/jpeg");
+        if (caption != null && !caption.isEmpty()) i.putExtra(Intent.EXTRA_TEXT, caption);
+        i.putExtra("jid", jid);
+        i.setPackage(pkg);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return i;
+    }
+
+    private void launchNextWaStep() {
+        if (waCancelled || waIndex >= waQueue.size()) {
+            finishWaSequence(waCancelled ? "cancelled" : "done");
+            return;
+        }
+        Intent next = waQueue.get(waIndex);
+        waIndex++;
+        sendToJs("waStep", waIndex + "/" + waQueue.size());
+        waAwaitingReturn = true;
+        waLeftApp = false;
+        try {
+            startActivity(next);
+        } catch (Exception e) {
+            waAwaitingReturn = false;
+            finishWaSequence("error:Could not open WhatsApp");
+        }
+    }
+
+    private void finishWaSequence(String result) {
+        waQueue.clear();
+        waIndex = 0;
+        waAwaitingReturn = false;
+        sendToJs("waDone", result);
+    }
+
+    /** Puts 2–6 product photos into one picture (grid), so the caption appears only once under them. */
+    private File buildCollage(List<File> files, File out) throws IOException {
+        if (out.exists() && out.length() > 0) return out;
+        final int W = 1440, GAP = 12;
+        int n = Math.min(files.size(), 6);
+        ArrayList<Rect> cells = new ArrayList<>();
+        int H;
+        if (n == 2) {
+            int c = (W - GAP) / 2;
+            cells.add(new Rect(0, 0, c, c));
+            cells.add(new Rect(c + GAP, 0, W, c));
+            H = c;
+        } else if (n == 3) {
+            int top = W * 2 / 3, c = (W - GAP) / 2;
+            cells.add(new Rect(0, 0, W, top));
+            cells.add(new Rect(0, top + GAP, c, top + GAP + c));
+            cells.add(new Rect(c + GAP, top + GAP, W, top + GAP + c));
+            H = top + GAP + c;
+        } else if (n == 4) {
+            int c = (W - GAP) / 2;
+            for (int r = 0; r < 2; r++)
+                for (int col = 0; col < 2; col++)
+                    cells.add(new Rect(col * (c + GAP), r * (c + GAP), col * (c + GAP) + c, r * (c + GAP) + c));
+            H = 2 * c + GAP;
+        } else if (n == 5) {
+            int c3 = (W - 2 * GAP) / 3, c2 = (W - GAP) / 2;
+            cells.add(new Rect(0, 0, c2, c3));
+            cells.add(new Rect(c2 + GAP, 0, W, c3));
+            for (int col = 0; col < 3; col++)
+                cells.add(new Rect(col * (c3 + GAP), c3 + GAP, col * (c3 + GAP) + c3, 2 * c3 + GAP));
+            H = 2 * c3 + GAP;
+        } else {
+            int c = (W - 2 * GAP) / 3;
+            for (int r = 0; r < 2; r++)
+                for (int col = 0; col < 3; col++)
+                    cells.add(new Rect(col * (c + GAP), r * (c + GAP), col * (c + GAP) + c, r * (c + GAP) + c));
+            H = 2 * c + GAP;
+        }
+        Bitmap canvasBmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(canvasBmp);
+        canvas.drawColor(Color.WHITE);
+        Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+        for (int i = 0; i < n; i++) {
+            Rect dst = cells.get(i);
+            Bitmap b = decodeSampled(files.get(i), dst.width(), dst.height());
+            if (b == null) continue;
+            float scale = Math.max((float) dst.width() / b.getWidth(), (float) dst.height() / b.getHeight());
+            int sw = Math.round(dst.width() / scale), sh = Math.round(dst.height() / scale);
+            int sx = (b.getWidth() - sw) / 2, sy = (b.getHeight() - sh) / 2;
+            canvas.drawBitmap(b, new Rect(sx, sy, sx + sw, sy + sh), dst, paint);
+            b.recycle();
+        }
+        try (OutputStream os = new FileOutputStream(out)) {
+            canvasBmp.compress(Bitmap.CompressFormat.JPEG, 88, os);
+        } finally {
+            canvasBmp.recycle();
+        }
+        return out;
+    }
+
+    private Bitmap decodeSampled(File f, int reqW, int reqH) {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getAbsolutePath(), o);
+        int sample = 1;
+        while (o.outWidth / (sample * 2) >= reqW && o.outHeight / (sample * 2) >= reqH) sample *= 2;
+        BitmapFactory.Options d = new BitmapFactory.Options();
+        d.inSampleSize = sample;
+        return BitmapFactory.decodeFile(f.getAbsolutePath(), d);
     }
 
     // ---------------------------------------------------------------- In-app updates

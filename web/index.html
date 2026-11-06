@@ -166,7 +166,8 @@
         maps: typeof settings.maps === 'string' ? settings.maps : '',
         mode: settings.mode === 'web' ? 'web' : 'auto',
         sendProducts: settings.sendProducts !== false,
-        androidApp: ['business', 'personal'].includes(settings.androidApp) ? settings.androidApp : 'auto'
+        androidApp: ['business', 'personal'].includes(settings.androidApp) ? settings.androidApp : 'auto',
+        photoMode: settings.photoMode === 'separate' ? 'separate' : 'collage'
       };
     };
     const dummyLeads = [
@@ -228,15 +229,43 @@
       img.src = url;
     });
 
+    const productCaption = (p, prefix = '') => {
+      let t = '*' + prefix + p.name.trim() + '*';
+      if (p.description.trim()) t += '\n' + p.description.trim();
+      const pr = fmtPrice(p.price); if (pr) t += '\n💰 Price: ' + pr;
+      return t;
+    };
+    const welcomeText = (lead, wa) => (wa && wa.welcome && wa.welcome.trim()) ? wa.welcome.trim().replace(/\{name\}/gi, lead.name || '') : '';
+    const linksText = (wa) => {
+      const parts = [];
+      if (wa && wa.catalogue && wa.catalogue.trim()) parts.push('🛍️ Our Catalogue:\n' + wa.catalogue.trim());
+      if (wa && wa.maps && wa.maps.trim()) parts.push('📍 Our Location:\n' + wa.maps.trim());
+      return parts.join('\n\n');
+    };
+    // Android app: one WhatsApp message per step → 1) welcome  2) each product: its photos with
+    // name/description/price ONCE below them  3) catalogue + Google Maps links
+    const buildWaPlan = (lead, wa, products) => {
+      const steps = [];
+      const w = welcomeText(lead, wa);
+      if (w) steps.push({ type: 'text', text: w });
+      productsToSend(wa, products).forEach(p => {
+        const caption = productCaption(p);
+        const images = p.images.map(i => i.url).slice(0, 6);
+        if (!images.length) steps.push({ type: 'text', text: caption });
+        else if (wa && wa.photoMode === 'separate') { steps.push({ type: 'images', images, caption: '', collage: false }); steps.push({ type: 'text', text: caption }); }
+        else steps.push({ type: 'images', images, caption, collage: true });
+      });
+      const l = linksText(wa);
+      if (l) steps.push({ type: 'text', text: l });
+      return steps;
+    };
     const buildWaText = (lead, wa, products, opts = {}) => {
       const parts = [];
       if (wa && wa.welcome && wa.welcome.trim()) parts.push(wa.welcome.trim().replace(/\{name\}/gi, lead.name || ''));
       const list = productsToSend(wa, products);
       if (list.length) {
         const lines = list.map((p, i) => {
-          let t = '*' + (i + 1) + '. ' + p.name.trim() + '*';
-          const pr = fmtPrice(p.price); if (pr) t += ' — ' + pr;
-          if (p.description.trim()) t += '\n' + p.description.trim();
+          let t = productCaption(p, (i + 1) + '. ');
           if (opts.photoLinks && p.images.length) t += '\n📷 ' + p.images[0].url;
           return t;
         });
@@ -267,6 +296,14 @@
     // Android app (APK): sends the message + product photos straight into the customer's WhatsApp chat.
     // Browser: the chat link pre-fills the message (photos as links); the full text is also copied as a backup.
     const sendWa = (lead, wa, toast, products) => (e) => {
+      if (isNativeApp() && window.AndroidBridge.sendWhatsAppSequence) {
+        e.preventDefault();
+        const plan = buildWaPlan(lead, wa, products);
+        if (!plan.length) { if (toast) toast('Add a welcome message or products in Settings first.', 'error'); return; }
+        try { window.AndroidBridge.sendWhatsAppSequence(waNum(lead.phone), JSON.stringify(plan), (wa && wa.androidApp) || 'auto'); }
+        catch (err) { if (toast) toast('Could not open WhatsApp: ' + err.message, 'error'); }
+        return;
+      }
       if (isNativeApp()) {
         e.preventDefault();
         const urls = productsToSend(wa, products).flatMap(p => p.images.map(i => i.url)).slice(0, 30);
@@ -1557,6 +1594,21 @@
       );
     }
 
+    function WaProgressCard({ status, onStop }) {
+      return (
+        <div className="fixed bottom-4 left-3 right-3 sm:left-auto sm:right-6 sm:w-96 z-[92] bg-slate-900 text-white rounded-2xl shadow-2xl p-4 animate-slide-up" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center shrink-0"><MsgIcon className="w-5 h-5" /></div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">{status.title}</p>
+              <p className="text-xs text-slate-300 mt-0.5">{status.detail}</p>
+            </div>
+            <button onClick={onStop} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-medium">Stop</button>
+          </div>
+        </div>
+      );
+    }
+
     function UpdateModal({ info, busy, onUpdate, onLater }) {
       return (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
@@ -1687,7 +1739,7 @@
             <h3 className="font-semibold text-slate-700">Product Catalogue <span className="text-slate-400 font-normal text-sm">({products.length})</span></h3>
             <Button onClick={() => setEditing({})} icon={Plus}>Add Product</Button>
           </div>
-          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. In the Android app their photos are attached too; in a browser each product's first photo is sent as a link.</p>
+          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. In the Android app each product goes as its photos with the description and price once below them; in a browser each product's first photo is sent as a link.</p>
           {products.length === 0 && <div className="text-sm text-slate-400 text-center py-6 border border-dashed border-slate-200 rounded-xl">No products yet. Click "Add Product" to create your catalogue.</div>}
           <div className="space-y-2">
             {products.map(p => (
@@ -1747,6 +1799,14 @@
                       <option value="personal">WhatsApp</option>
                     </select>
                   </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Product photos in the Android app</label>
+                    <select value={wa.photoMode} onChange={e => setWa({ ...wa, photoMode: e.target.value })} className={inp}>
+                      <option value="collage">All photos of a product in one picture, description &amp; price below (recommended)</option>
+                      <option value="separate">Photos sent separately, then description &amp; price as next message</option>
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1.5">Order: Welcome message → each product (photos + name, description, price once) → Catalogue &amp; Google Maps links. Press Send in WhatsApp each time; the next message opens automatically.</p>
+                  </div>
                 </div>
                 <div className="flex justify-end"><Button onClick={() => onSaveWa(wa)}>Save WhatsApp Settings</Button></div>
               </div>
@@ -1770,6 +1830,22 @@
       const [updating, setUpdating] = useState(false);
       const [congrats, setCongrats] = useState(null);
       const [notifs, setNotifs] = useState([]);
+      const [waStatus, setWaStatus] = useState(null);
+      useEffect(() => {
+        window.__lmNative = (type, payload) => {
+          if (type === 'waProgress') setWaStatus({ title: 'Getting WhatsApp messages ready…', detail: payload });
+          else if (type === 'waStep' || type === 'waNext') {
+            const [i, n] = String(payload).split('/');
+            setWaStatus(type === 'waStep'
+              ? { title: 'WhatsApp message ' + i + ' of ' + n, detail: 'Press Send in WhatsApp. The next one opens automatically.' }
+              : { title: 'Sent ' + i + ' of ' + n, detail: 'Opening the next message…' });
+          } else if (type === 'waDone') {
+            setWaStatus(null);
+            if (payload === 'done') showToast('All WhatsApp messages are done.', 'success');
+            else if (String(payload).indexOf('error:') === 0) showToast(String(payload).slice(6), 'error');
+          } else if (window.__lmUpdateHandler) window.__lmUpdateHandler(type, payload);
+        };
+      }, []);
       const meRef = useRef(null);
       useEffect(() => { meRef.current = currentUser; }, [currentUser]);
       const [waSettings, setWaSettings] = useState(() => normalizeWaSettings({}));
@@ -1957,7 +2033,7 @@
       useEffect(() => {
         if (APP_VERSION === 'dev') return;
         const skipped = (v) => lsGet('lm_skip_version') === v + '|' + new Date().toDateString();
-        window.__lmNative = (type, payload) => {
+        window.__lmUpdateHandler = (type, payload) => {
           if (type === 'update') {
             try { const info = JSON.parse(payload); if (info && info.version && cmpVer(info.version, APP_VERSION) > 0 && !skipped(info.version)) setUpdateInfo(info); } catch (e) {}
           } else if (type === 'updateError') {
@@ -2216,6 +2292,7 @@
           <NotificationStack items={notifs} onClose={(id) => setNotifs(prev => prev.filter(x => x.id !== id))} onOpen={(n) => { setNotifs(prev => prev.filter(x => x.id !== n.id)); setCurrentView('leads'); }} />
           {updateInfo && !congrats && <UpdateModal info={updateInfo} busy={updating} onUpdate={handleUpdateNow} onLater={handleUpdateLater} />}
           {congrats && <CongratsModal version={congrats.version} notes={congrats.notes} onClose={() => setCongrats(null)} />}
+          {waStatus && <WaProgressCard status={waStatus} onStop={() => { try { window.AndroidBridge.cancelWhatsAppSequence(); } catch (e) {} setWaStatus(null); }} />}
         </>
       );
 
