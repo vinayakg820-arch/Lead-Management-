@@ -54,7 +54,8 @@ Upload `web/index.html` to your EdgeOne Pages project (replace the old file), th
 ## 5. In-app updates (v1.0.5 पासून)
 
 - GitHub वर नवीन version तयार झाला की app मध्ये **"New Update Available"** pop-up येतो → **Update Now** → update होऊन **Congratulations** message येतो.
-- **Android app:** फक्त web app बदलला असेल तर काही सेकंदात update होतो (reinstall नाही). Java/Manifest बदलला असेल तर `MainActivity.java` मधील `NATIVE_VERSION` 1 ने वाढवा; मग app नवीन APK download करून Install विचारतो.
+- **Android app (v1.0.11 पासून):** app तुमची EdgeOne website तपासतो. नवीन `LeadMaster-EdgeOne-v….zip` EdgeOne वर upload केली की app मध्ये "Update Now" येतो आणि काही सेकंदात update होतो (APK install नाही). Website address Settings मध्ये बदलता येतो.
+- Java/Manifest बदलला असेल तर `MainActivity.java` मधील `NATIVE_VERSION` आणि `web/index.html` मधील `MIN_NATIVE_VERSION` दोन्ही 1 ने वाढवा; मग app नवीन APK download करून Install विचारतो.
 - **Browser (EdgeOne):** नवीन `LeadMaster-EdgeOne-v….zip` EdgeOne वर deploy केल्यानंतरच browser users ना pop-up दिसतो.
 - Commit message चा मजकूर "What's new" मध्ये दिसतो.
 

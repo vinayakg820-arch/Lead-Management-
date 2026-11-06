@@ -167,6 +167,7 @@
         mode: ['web', 'ask'].includes(settings.mode) ? settings.mode : 'auto',
         sendProducts: settings.sendProducts !== false,
         androidApp: ['business', 'personal'].includes(settings.androidApp) ? settings.androidApp : 'auto',
+        siteUrl: typeof settings.siteUrl === 'string' && /^https:\/\//.test(settings.siteUrl.trim()) ? settings.siteUrl.trim() : DEFAULT_SITE_URL,
         photoMode: settings.photoMode === 'separate' ? 'separate' : 'collage'
       };
     };
@@ -185,6 +186,17 @@
     const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
     const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
     const GITHUB_REPO = 'vinayakg820-arch/Lead-Management-';
+    // Phones check this website (EdgeOne) for a newer version: upload a new ZIP there → "Update Now" pop-up in the app
+    const DEFAULT_SITE_URL = 'https://leadmanagementcharvicomputers.edgeone.dev/';
+    // Lowest Android app (native) version this web code needs; raise it together with NATIVE_VERSION in MainActivity.java
+    const MIN_NATIVE_VERSION = 3;
+    // Filled in by the GitHub build with the commit message; shown as "What's new"
+    const RELEASE_NOTES_RAW = "__RELEASE_NOTES__";
+    const RELEASE_NOTES = RELEASE_NOTES_RAW.indexOf('__REL') === 0 ? '' : RELEASE_NOTES_RAW;
+    const notesFromHtml = (html) => {
+      const m = html.match(/const RELEASE_NOTES_RAW = ("(?:[^"\\]|\\.)*")/);
+      try { return m ? JSON.parse(m[1]) : ''; } catch (e) { return ''; }
+    };
     const playDing = () => {
       try {
         const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -1924,7 +1936,12 @@
                     <p className="text-xs text-slate-500 mt-1.5">Order: Welcome message → each product (photos + name, description, price once) → Catalogue &amp; Google Maps links. Press Send in WhatsApp each time; the next message opens automatically.</p>
                   </div>
                 </div>
-                <div className="flex justify-end"><Button onClick={() => onSaveWa(wa)}>Save WhatsApp Settings</Button></div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Website address (EdgeOne) for app updates</label>
+                  <input type="url" value={wa.siteUrl} onChange={e => setWa({ ...wa, siteUrl: e.target.value })} placeholder={DEFAULT_SITE_URL} className={inp} />
+                  <p className="text-xs text-slate-500 mt-1.5">Upload a new ZIP to this website → every Android app shows "Update Now". Change this only if your EdgeOne address changes.</p>
+                </div>
+                <div className="flex justify-end"><Button onClick={() => onSaveWa(wa)}>Save Settings</Button></div>
               </div>
               <ProductCatalogueSection products={products} onSaveProduct={onSaveProduct} onDeleteProduct={onDeleteProduct} />
             </div>
@@ -1978,6 +1995,8 @@
       useEffect(() => { meRef.current = currentUser; }, [currentUser]);
       const [waSettings, setWaSettings] = useState(() => normalizeWaSettings({}));
       const [products, setProducts] = useState([]);
+      const siteUrlRef = useRef(DEFAULT_SITE_URL);
+      useEffect(() => { siteUrlRef.current = waSettings.siteUrl || DEFAULT_SITE_URL; }, [waSettings]);
       const synced = useRef({ leads: new Map(), tasks: new Map(), categories: '', references: '', whatsapp: '' });
 
       const [currentView, setCurrentView] = useState('dashboard');
@@ -2162,12 +2181,7 @@
         if (last && cmpVer(APP_VERSION, last) > 0) {
           let notes = ''; try { notes = JSON.parse(pendingRaw || '{}').notes || ''; } catch (e) {}
           setCongrats({ version: APP_VERSION, notes });
-          if (!notes) {
-            fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/tags/v' + APP_VERSION).then(r => r.ok ? r.json() : null).then(j => {
-              const body = (j && j.body) || '', k = body.indexOf('Change:');
-              if (k > -1) setCongrats(c => c ? { ...c, notes: body.slice(k + 7).trim() } : c);
-            }).catch(() => {});
-          }
+          if (!notes && RELEASE_NOTES) setCongrats({ version: APP_VERSION, notes: RELEASE_NOTES });
         }
         lsSet('lm_update_pending', null); lsSet('lm_version', APP_VERSION);
         if (location.search.indexOf('lmv=') > -1) { try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {} }
@@ -2190,19 +2204,18 @@
           if (document.hidden || Date.now() - lastCheck < 10 * 60 * 1000) return;
           lastCheck = Date.now();
           if (isNativeApp()) {
-            if (window.AndroidBridge.checkForUpdate) { try { window.AndroidBridge.checkForUpdate(APP_VERSION); } catch (e) {} }
+            try {
+              if (window.AndroidBridge.checkForUpdateFrom) window.AndroidBridge.checkForUpdateFrom(APP_VERSION, siteUrlRef.current || DEFAULT_SITE_URL);
+              else if (window.AndroidBridge.checkForUpdate) window.AndroidBridge.checkForUpdate(APP_VERSION);
+            } catch (e) {}
             return;
           }
           try {
             const res = await fetch(location.pathname + '?lmcheck=' + Date.now(), { cache: 'no-store' });
-            const m = (await res.text()).match(/const APP_VERSION = '([0-9][0-9.]*)'/);
+            const html = await res.text();
+            const m = html.match(/const APP_VERSION = '([0-9][0-9.]*)'/);
             if (!m || cmpVer(m[1], APP_VERSION) <= 0 || skipped(m[1])) return;
-            let notes = '';
-            try {
-              const r = await fetch('https://api.github.com/repos/' + GITHUB_REPO + '/releases/tags/v' + m[1]);
-              if (r.ok) { const body = (await r.json()).body || ''; const i = body.indexOf('Change:'); notes = i > -1 ? body.slice(i + 7).trim() : ''; }
-            } catch (e) {}
-            setUpdateInfo({ version: m[1], notes });
+            setUpdateInfo({ version: m[1], notes: notesFromHtml(html) });
           } catch (e) {}
         };
         const first = setTimeout(check, 3000);

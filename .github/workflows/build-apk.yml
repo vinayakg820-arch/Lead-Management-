@@ -22,10 +22,21 @@ jobs:
           java-version: '17'
 
       - name: Set version
+        env:
+          NOTES: ${{ github.event.head_commit.message }}
         run: |
           VERSION="1.0.${{ github.run_number }}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           sed -i "s/__APP_VERSION__/$VERSION/g" web/index.html
+          printf '%s\n' "$NOTES" | grep -v -E '^(Co-Authored-By|Claude-Session|Signed-off-by):' > /tmp/notes.txt
+          python3 - <<'PYEOF'
+          import json
+          notes = open('/tmp/notes.txt', encoding='utf-8').read().strip()
+          p = 'web/index.html'
+          s = open(p, encoding='utf-8').read()
+          s = s.replace('"__RELEASE_NOTES__"', json.dumps(notes, ensure_ascii=False).replace('</', '<\\/'), 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          PYEOF
           grep -q "'$VERSION'" web/index.html && echo "App version: $VERSION"
 
       - name: Prepare preinstalled Android SDK

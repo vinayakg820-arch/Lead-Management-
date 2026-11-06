@@ -56,6 +56,8 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,7 +79,7 @@ public class MainActivity extends Activity {
     /** Increase by 1 whenever this Java code / AndroidManifest changes. The GitHub build publishes it in
      *  update.json; if a newer release has a higher number the app downloads the new APK, otherwise it only
      *  downloads the new web app (instant update, no reinstall). */
-    public static final int NATIVE_VERSION = 3;
+    public static final int NATIVE_VERSION = 4;
     private static final String UPDATE_URL =
             "https://github.com/vinayakg820-arch/Lead-Management-/releases/latest/download/update.json";
     private static final String CHANNEL_ID = "lead_alerts";
@@ -301,6 +303,15 @@ public class MainActivity extends Activity {
             io.execute(new Runnable() {
                 @Override
                 public void run() { doCheckForUpdate(currentWebVersion); }
+            });
+        }
+
+        /** Checks the EdgeOne website: a newer uploaded ZIP shows "Update Now" in the app. */
+        @JavascriptInterface
+        public void checkForUpdateFrom(final String currentWebVersion, final String siteUrl) {
+            io.execute(new Runnable() {
+                @Override
+                public void run() { doCheckSite(currentWebVersion, siteUrl); }
             });
         }
 
@@ -535,6 +546,43 @@ public class MainActivity extends Activity {
             sendToJs("update", u.toString());
         } catch (Exception ignored) {
             // offline or no release yet: try again later
+        }
+    }
+
+    private void doCheckSite(String currentWebVersion, String siteUrl) {
+        try {
+            if (siteUrl == null || !siteUrl.startsWith("https://")) return;
+            String html = httpGetString(siteUrl + (siteUrl.contains("?") ? "&" : "?") + "lmcheck=" + System.currentTimeMillis());
+            Matcher v = Pattern.compile("const APP_VERSION = '([0-9][0-9.]*)'").matcher(html);
+            if (!v.find()) return;
+            String version = v.group(1);
+            if (compareVersions(version, currentWebVersion) <= 0) return;
+            int minNative = 0;
+            Matcher mn = Pattern.compile("const MIN_NATIVE_VERSION = (\\d+)").matcher(html);
+            if (mn.find()) minNative = parseIntSafe(mn.group(1));
+            String notes = "";
+            Matcher nt = Pattern.compile("const RELEASE_NOTES_RAW = (\"(?:[^\"\\\\]|\\\\.)*\")").matcher(html);
+            if (nt.find()) {
+                try { notes = new JSONArray("[" + nt.group(1) + "]").getString(0); } catch (Exception ignored) { }
+            }
+            JSONObject u = new JSONObject();
+            u.put("version", version);
+            u.put("notes", notes);
+            u.put("web", siteUrl + (siteUrl.contains("?") ? "&" : "?") + "lmv=" + version);
+            boolean needsApk = minNative > NATIVE_VERSION;
+            u.put("needsApk", needsApk);
+            if (needsApk) {
+                try {
+                    JSONObject gh = new JSONObject(httpGetString(UPDATE_URL));
+                    u.put("apk", gh.optString("apk", ""));
+                } catch (Exception e) {
+                    return; // cannot find the new APK right now; try again later
+                }
+            }
+            pendingUpdate = u;
+            sendToJs("update", u.toString());
+        } catch (Exception ignored) {
+            // offline: try again later
         }
     }
 
