@@ -64,3 +64,9 @@ Upload `web/index.html` to your EdgeOne Pages project (replace the old file), th
 - Admin ने lead assign/edit केला की त्या user ला pop notification (आवाजासह) येते; user ने lead बदलला/जोडला की admin ला येते.
 - App background मध्ये असताना Android notification / browser notification येते (पहिल्यांदा permission Allow करा).
 - App पूर्ण बंद असताना notification येत नाही (त्यासाठी Firebase push लागेल).
+
+## 7. Live updates आणि Desktop app (v1.0.13 पासून)
+
+- `LeadMaster-EdgeOne-v….zip` मध्ये आता `index.html`, `manifest.webmanifest`, `sw.js` आणि `icons/` आहेत. पूर्ण ZIP EdgeOne वर upload करा.
+- Upload नंतर कोणीही नवीन version उघडला की Supabase सगळ्या open apps (phone, computer) ना लगेच कळवतो → "Update Now" pop-up.
+- Computer वर Chrome/Edge मध्ये site उघडा → menu खालच्या "⬇ Install App on this computer" (किंवा address bar मधील install icon) → desktop app.

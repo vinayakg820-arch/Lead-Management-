@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>LeadMaster - Lead Management System</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   
   <!-- Tailwind CSS for styling -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -211,6 +215,11 @@
       if (!document.hidden) return;
       try { if (window.AndroidBridge && window.AndroidBridge.showNotification) { window.AndroidBridge.showNotification(title, body); return; } } catch (e) {}
       try { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }); } catch (e) {}
+    };
+    // Called when Supabase says a newer version exists somewhere → check the website now
+    const announceVersion = (value) => {
+      const v = value && value.version;
+      if (v && APP_VERSION !== 'dev' && cmpVer(v, APP_VERSION) > 0 && window.__lmCheckUpdateNow) setTimeout(() => window.__lmCheckUpdateNow(), 1500);
     };
     // ---------- Supabase ----------
     const sb = supabase.createClient('https://cssswtyzfmfoijcjgxpe.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzc3N3dHl6Zm1mb2lqY2pneHBlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3MzI1MjUsImV4cCI6MjEwODMwODUyNX0.Em-aabrMfICAsYMfGf719hN0eXMsxt2CGcAkfi4Fe98');
@@ -581,7 +590,7 @@
       );
     };
 
-    function LoginView({ onLogin, onImportLogin, showToast }) {
+    function LoginView({ onLogin, onImportLogin, showToast, canInstall, onInstall }) {
       const [loginId, setLoginId] = useState('');
       const [password, setPassword] = useState('');
       const fileInputRef = useRef(null);
@@ -664,6 +673,7 @@
             <p className="text-sm font-medium text-slate-500">Powered By <span className="text-indigo-600 font-bold tracking-wide">NexGen Softwares</span></p>
             <p className="text-xs text-slate-400 mt-1.5 font-medium">Vinayak Gosavi - 9156103714</p>
             <p className="text-[11px] text-slate-400 mt-1">Version {APP_VERSION}</p>
+            {canInstall && <button onClick={onInstall} className="mt-3 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">⬇ Install LeadMaster app on this computer</button>}
           </div>
         </div>
       );
@@ -1992,6 +2002,17 @@
       const [notifs, setNotifs] = useState([]);
       const [waStatus, setWaStatus] = useState(null);
       const [webSeq, setWebSeq] = useState(null);
+      const [installEvt, setInstallEvt] = useState(null);
+      useEffect(() => {
+        if (isNativeApp()) return;
+        if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+        const onPrompt = (e) => { e.preventDefault(); setInstallEvt(e); };
+        const onInstalled = () => { setInstallEvt(null); showToast('LeadMaster is installed on this computer. Open it from the desktop or Start menu.', 'success'); };
+        window.addEventListener('beforeinstallprompt', onPrompt);
+        window.addEventListener('appinstalled', onInstalled);
+        return () => { window.removeEventListener('beforeinstallprompt', onPrompt); window.removeEventListener('appinstalled', onInstalled); };
+      }, []);
+      const installApp = async () => { if (!installEvt) return; installEvt.prompt(); try { await installEvt.userChoice; } catch (e) {} setInstallEvt(null); };
       const [sends, setSends] = useState({});
       const loadSends = async () => {
         const { data, error } = await sb.from('lead_sends').select('lead_id,item,sent_at');
@@ -2126,6 +2147,7 @@
           .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, p => applyRow('tasks', setTasks, p))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, p => {
             if (!p.new || !p.new.key) return;
+            if (p.new.key === 'latest_version') { announceVersion(p.new.value); return; }
             const key = p.new.key;
             let value = p.new.value;
             if (key === 'categories') value = normalizeStringList(value, dummyCategories);
@@ -2169,7 +2191,7 @@
         const refresh = async () => {
           if (document.hidden) return;
           const { data } = await sb.from('settings').select('*');
-          if (data) data.forEach(r => apply(r.key, r.value));
+          if (data) data.forEach(r => { if (r.key === 'latest_version') announceVersion(r.value); else apply(r.key, r.value); });
           loadProducts();
         };
         refresh();
@@ -2214,6 +2236,13 @@
         });
       }, [loaded]);
 
+      // A device running a newer version tells everyone (Supabase realtime) → others check for the update right away
+      useEffect(() => {
+        if (!loaded || APP_VERSION === 'dev') return;
+        sb.rpc('report_app_version', { v: APP_VERSION }).then(() => {});
+        sb.from('settings').select('value').eq('key', 'latest_version').maybeSingle().then(({ data }) => { if (data) announceVersion(data.value); });
+      }, [loaded]);
+
       // Ask once for browser notification permission (web only; the Android app asks on its own)
       useEffect(() => {
         if (!loaded || isNativeApp() || !('Notification' in window) || Notification.permission !== 'default') return;
@@ -2248,8 +2277,9 @@
           }
         };
         let lastCheck = 0;
+        window.__lmCheckUpdateNow = () => { lastCheck = 0; check(); };
         const check = async () => {
-          if (document.hidden || Date.now() - lastCheck < 10 * 60 * 1000) return;
+          if (document.hidden || Date.now() - lastCheck < 60 * 1000) return;
           lastCheck = Date.now();
           if (isNativeApp()) {
             try {
@@ -2267,7 +2297,7 @@
           } catch (e) {}
         };
         const first = setTimeout(check, 3000);
-        const timer = setInterval(() => { lastCheck = 0; check(); }, 30 * 60 * 1000);
+        const timer = setInterval(() => { lastCheck = 0; check(); }, 5 * 60 * 1000);
         document.addEventListener('visibilitychange', check);
         return () => { clearTimeout(first); clearInterval(timer); document.removeEventListener('visibilitychange', check); };
       }, []);
@@ -2548,7 +2578,7 @@
           <>
             <Toast {...toast} />
             {overlays}
-            <LoginView onLogin={handleLogin} onImportLogin={handleImportCredentialsLogin} showToast={showToast} />
+            <LoginView onLogin={handleLogin} onImportLogin={handleImportCredentialsLogin} showToast={showToast} canInstall={!!installEvt} onInstall={installApp} />
           </>
         );
       }
@@ -2597,7 +2627,7 @@
               {isAdmin && <button onClick={() => setIsSettingsOpen(true)} className="w-full flex items-center px-4 py-3 text-slate-400 hover:bg-slate-800 hover:text-white rounded-xl transition-all duration-200"><Settings className="w-5 h-5 mr-3" /><span className="font-medium">Settings</span></button>}
               <button onClick={handleLogout} className="w-full flex items-center px-4 py-3 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-xl transition-all duration-200"><LogOut className="w-5 h-5 mr-3" /><span className="font-medium">Log Out</span></button>
             </div>
-            <div className="p-4 bg-slate-950/50 text-center text-xs border-t border-slate-800/60 pb-6 md:pb-4"><p className="text-slate-400">Powered By <span className="text-indigo-400 font-semibold">NexGen Softwares</span></p><p className="text-slate-500 mt-1">Vinayak Gosavi - <a href="tel:9156103714" className="hover:text-indigo-300 transition-colors">9156103714</a></p><p className="text-slate-600 mt-1">Version {APP_VERSION}</p></div>
+            <div className="p-4 bg-slate-950/50 text-center text-xs border-t border-slate-800/60 pb-6 md:pb-4"><p className="text-slate-400">Powered By <span className="text-indigo-400 font-semibold">NexGen Softwares</span></p><p className="text-slate-500 mt-1">Vinayak Gosavi - <a href="tel:9156103714" className="hover:text-indigo-300 transition-colors">9156103714</a></p><p className="text-slate-600 mt-1">Version {APP_VERSION}</p>{installEvt && <button onClick={installApp} className="mt-2 w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold">⬇ Install App on this computer</button>}</div>
           </div>
 
           {}

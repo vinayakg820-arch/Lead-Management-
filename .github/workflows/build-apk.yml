@@ -69,7 +69,7 @@ jobs:
       - name: Package APK and EdgeOne ZIP
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk "LeadMaster-v$VERSION.apk"
-          (cd web && zip -q "../LeadMaster-EdgeOne-v$VERSION.zip" index.html)
+          (cd web && zip -qr "../LeadMaster-EdgeOne-v$VERSION.zip" index.html manifest.webmanifest sw.js icons)
           cp web/index.html index.html
           NATIVE=$(grep -oP 'NATIVE_VERSION = \K[0-9]+' android/app/src/main/java/com/nexgen/leadmaster/MainActivity.java)
           BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION"
