@@ -257,20 +257,22 @@
     };
     // Android app: one WhatsApp message per step → 1) welcome  2) each product: its photos with
     // name/description/price ONCE below them  3) catalogue + Google Maps links
-    const buildWaPlan = (lead, wa, products) => {
+    // What a lead has already received: { '__welcome__': time, '__links__': time, <productId>: time }
+    const pendingProducts = (wa, products, sent) => productsToSend(wa, products).filter(p => !(sent && sent[p.id]));
+    const buildWaPlan = (lead, wa, products, sent = {}) => {
       const steps = [];
       const w = welcomeText(lead, wa);
-      if (w) steps.push({ type: 'text', text: w });
-      productsToSend(wa, products).forEach(p => {
+      if (w && !sent.__welcome__) steps.push({ type: 'text', text: w, item: '__welcome__' });
+      pendingProducts(wa, products, sent).forEach(p => {
         const caption = productCaption(p);
         const images = p.images.map(i => i.url).slice(0, 6);
-        if (!images.length) steps.push({ type: 'text', text: caption });
-        else if (p.collage_url && !(wa && wa.photoMode === 'separate')) steps.push({ type: 'images', images: [p.collage_url], caption, collage: true });
-        else if (wa && wa.photoMode === 'separate') { steps.push({ type: 'images', images, caption: '', collage: false }); steps.push({ type: 'text', text: caption }); }
-        else steps.push({ type: 'images', images, caption, collage: true });
+        if (!images.length) steps.push({ type: 'text', text: caption, item: p.id });
+        else if (p.collage_url && !(wa && wa.photoMode === 'separate')) steps.push({ type: 'images', images: [p.collage_url], caption, collage: true, item: p.id });
+        else if (wa && wa.photoMode === 'separate') { steps.push({ type: 'images', images, caption: '', collage: false, item: p.id }); steps.push({ type: 'text', text: caption, item: p.id }); }
+        else steps.push({ type: 'images', images, caption, collage: true, item: p.id });
       });
       const l = linksText(wa);
-      if (l) steps.push({ type: 'text', text: l });
+      if (l && !sent.__links__) steps.push({ type: 'text', text: l, item: '__links__' });
       return steps;
     };
     const buildWaText = (lead, wa, products, opts = {}) => {
@@ -300,19 +302,21 @@
       return 'https://api.whatsapp.com/send/?phone=' + num + (q ? '&text=' + q : '') + '&type=phone_number&app_absent=0';
     };
     const WA_MAX_URL = 30000; // WhatsApp accepts long pre-filled text; only extreme lengths fall back to copy & paste
-    const buildWebSteps = (lead, wa, products) => {
+    const buildWebSteps = (lead, wa, products, sent = {}) => {
       const steps = [];
       const w = welcomeText(lead, wa);
-      if (w) steps.push({ title: 'Welcome message', text: w });
-      productsToSend(wa, products).forEach(p => {
+      if (w && !sent.__welcome__) steps.push({ title: 'Welcome message', text: w, item: '__welcome__' });
+      pendingProducts(wa, products, sent).forEach(p => {
         const photo = p.collage_url || (p.images[0] && p.images[0].url) || '';
-        steps.push({ title: p.name, text: (photo ? photo + '\n\n' : '') + productCaption(p), caption: productCaption(p),
+        steps.push({ title: p.name, item: p.id, text: (photo ? photo + '\n\n' : '') + productCaption(p), caption: productCaption(p),
           photos: p.images.map(i => i.url), collageUrl: p.collage_url, key: p.id + ':' + (p.collage_url || p.images.map(i => i.url).join('|')) });
       });
       const l = linksText(wa);
-      if (l) steps.push({ title: 'Catalogue & location links', text: l });
+      if (l && !sent.__links__) steps.push({ title: 'Catalogue & location links', text: l, item: '__links__' });
       return steps;
     };
+    // Tell the app that a message for this lead was opened in WhatsApp (marks it as sent)
+    const markSent = (leadId, item) => { if (leadId && item) window.dispatchEvent(new CustomEvent('lm-wa-sent', { detail: { leadId: String(leadId), item } })); };
     // Computer: put the product picture on the clipboard so it can be pasted (Ctrl+V) into the chat
     const canCopyImage = () => !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext) && !isMobileUA();
     const pngCache = new Map();
@@ -332,6 +336,7 @@
     const prepareStepPhotos = (steps) => { if (canCopyImage()) steps.forEach(st => { if (st.photos && st.photos.length) productPng(st).catch(() => {}); }); };
     // Opens the chat for one step. Product on a computer: photo copied + details typed → user presses Ctrl+V, Enter
     const openWaStep = async (lead, step, mode, toast) => {
+      markSent(lead.id, step.item);
       if (step.photos && step.photos.length && canCopyImage()) {
         try {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': productPng(step) })]);
@@ -358,11 +363,19 @@
     };
     // Android app (APK): sends the message + product photos straight into the customer's WhatsApp chat.
     // Browser: the chat link pre-fills the message (photos as links); the full text is also copied as a backup.
-    const sendWa = (lead, wa, toast, products, openDialog) => (e) => {
+    const sendWa = (lead, wa, toast, products, sentForLead) => (e) => {
+      let sent = sentForLead || {};
+      const nothingConfigured = !buildWaPlan(lead, wa, products, {}).length;
+      if (nothingConfigured) { e.preventDefault(); if (toast) toast('Add a welcome message or products in Settings first.', 'error'); return; }
+      if (!buildWaPlan(lead, wa, products, sent).length) {
+        e.preventDefault();
+        if (!window.confirm('All products are already sent to ' + (lead.name || 'this customer') + '. Send everything again?')) return;
+        sent = {};
+      }
       if (isNativeApp() && window.AndroidBridge.sendWhatsAppSequence) {
         e.preventDefault();
-        const plan = buildWaPlan(lead, wa, products);
-        if (!plan.length) { if (toast) toast('Add a welcome message or products in Settings first.', 'error'); return; }
+        const plan = buildWaPlan(lead, wa, products, sent);
+        window.__lmWaPlan = { leadId: lead.id, steps: plan };
         try { window.AndroidBridge.sendWhatsAppSequence(waNum(lead.phone), JSON.stringify(plan), (wa && wa.androidApp) || 'auto'); }
         catch (err) { if (toast) toast('Could not open WhatsApp: ' + err.message, 'error'); }
         return;
@@ -379,9 +392,9 @@
       }
       // Browser: open the customer's chat with the first message typed in; the bar at the bottom opens the next one
       e.preventDefault();
-      const steps = buildWebSteps(lead, wa, products);
-      if (!steps.length) { if (toast) toast('Add a welcome message or products in Settings first.', 'error'); return; }
-      openWaChat(lead, steps[0].text, wa && wa.mode);
+      const steps = buildWebSteps(lead, wa, products, sent);
+      if (!steps.length) return;
+      openWaStep(lead, steps[0], wa && wa.mode, toast);
       prepareStepPhotos(steps);
       if (steps.length > 1) window.dispatchEvent(new CustomEvent('lm-wa-steps', { detail: { lead, steps, mode: wa && wa.mode } }));
     };
@@ -417,6 +430,15 @@
       const bmp = await createImageBitmap(blob), c = document.createElement('canvas');
       c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0);
       return canvasToBlob(c, 'image/png');
+    };
+    // Small badge on the WhatsApp icon: ✓ = all products sent, number = products still pending
+    const WaBadge = ({ wa, products, sent }) => {
+      const total = productsToSend(wa, products).length;
+      if (!total) return null;
+      const pending = pendingProducts(wa, products, sent).length;
+      return pending === 0
+        ? <span title="All products sent" className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">✓</span>
+        : <span title={pending + ' product(s) not sent yet'} className="absolute -top-1.5 -right-1.5 min-w-[1rem] h-4 px-1 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">{pending}</span>;
     };
     const MsgIcon = ({ className }) => (<svg className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>);
     const rowOf = (table, o) => table === 'settings' ? o : ({ id: String(o.id), assigned_to: o.assignedTo ?? null, data: o });
@@ -1056,7 +1078,7 @@
       );
     }
 
-    function LeadsManagerView({ waSettings, products, showToast, leads, categories, references, onAdd, onUpdate, onBulkUpdate, onDelete, currentUser, users }) {
+    function LeadsManagerView({ waSettings, products, sends, showToast, leads, categories, references, onAdd, onUpdate, onBulkUpdate, onDelete, currentUser, users }) {
       const isAdmin = currentUser.role === 'admin';
       const [isFormOpen, setIsFormOpen] = useState(false); 
       const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
@@ -1210,7 +1232,7 @@
                   </div>
                   <div className="flex border-t border-slate-100 bg-slate-50/70 divide-x divide-slate-100 text-sm font-medium">
                     <a href={`tel:${lead.phone}`} className="flex-1 py-3 flex items-center justify-center text-emerald-600 active:bg-emerald-50"><Phone className="w-4 h-4 mr-1.5" />Call</a>
-                    <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><MsgIcon className="w-4 h-4 mr-1.5" />WhatsApp</a>
+                    <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products, sends[String(lead.id)])} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><span className="relative mr-1.5 inline-flex"><MsgIcon className="w-4 h-4" /><WaBadge wa={waSettings} products={products} sent={sends[String(lead.id)]} /></span>WhatsApp</a>
                     <button aria-label="View lead" onClick={() => setViewingLead(lead)} className="flex-1 py-3 flex items-center justify-center text-blue-600 active:bg-blue-50"><Eye className="w-4 h-4" /></button>
                     <button aria-label="Edit lead" onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="flex-1 py-3 flex items-center justify-center text-indigo-600 active:bg-indigo-50"><Edit2 className="w-4 h-4" /></button>
                     {isAdmin && <button aria-label="Assign lead" onClick={() => setAssigningLead(lead)} className="flex-1 py-3 flex items-center justify-center text-amber-600 active:bg-amber-50"><UserPlus className="w-4 h-4" /></button>}
@@ -1244,7 +1266,7 @@
                       <td className="p-4 align-top"><div className="flex flex-col items-start gap-1.5"><Badge status={lead.conversionStatus} />{lead.conversionStatus === 'Converted' && lead.buyingWhen && (<div className="text-xs text-emerald-600 font-medium">When: {lead.buyingWhen}</div>)}{lead.conversionStatus === 'Not Converted' && lead.notBuyingReason && (<div className="text-xs text-red-500 truncate max-w-[150px]" title={lead.notBuyingReason}>Why: {lead.notBuyingReason}</div>)}</div></td>
                       <td className="p-4 text-right align-top">
                         <div className="flex justify-end items-start">
-                          <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products)} target="_blank" rel="noopener noreferrer" className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors mr-1 inline-flex" title="Send WhatsApp welcome message"><MsgIcon className="w-4 h-4" /></a>
+                          <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products, sends[String(lead.id)])} target="_blank" rel="noopener noreferrer" className="relative p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors mr-1 inline-flex" title="Send products on WhatsApp"><MsgIcon className="w-4 h-4" /><WaBadge wa={waSettings} products={products} sent={sends[String(lead.id)]} /></a>
                           <button onClick={() => setViewingLead(lead)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors mr-1" title="View Lead"><Eye className="w-4 h-4" /></button>
                           <button onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors mr-1" title="Edit Status"><Edit2 className="w-4 h-4" /></button>
                           {/* Restricted Actions */}
@@ -1847,7 +1869,7 @@
                 </div>
                 <input ref={fileRef} type="file" accept="image/*" multiple onChange={addFiles} className="hidden" />
               </div>
-              <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 rounded" />Send this product in the WhatsApp message</label>
+              <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 rounded" />Active — send this product to customers (untick = Discontinued)</label>
             </div>
             <div className="flex gap-2 justify-end p-4 border-t border-slate-100">
               <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
@@ -1858,7 +1880,7 @@
       );
     }
 
-    function ProductCatalogueSection({ products, onSaveProduct, onDeleteProduct }) {
+    function ProductCatalogueSection({ products, onSaveProduct, onDeleteProduct, onToggleProduct }) {
       const [editing, setEditing] = useState(null); // null = closed, {} = new, product = edit
       return (
         <div className="md:col-span-2 space-y-4">
@@ -1866,7 +1888,7 @@
             <h3 className="font-semibold text-slate-700">Product Catalogue <span className="text-slate-400 font-normal text-sm">({products.length})</span></h3>
             <Button onClick={() => setEditing({})} icon={Plus}>Add Product</Button>
           </div>
-          <p className="text-xs text-slate-500">Products ticked "Send" go into every lead's WhatsApp message with name, price and description. Every product goes as its own message: Welcome → Product 1 (photo + details) → Product 2 … → links. WhatsApp opens this customer's chat with the message typed in; you press Send. Android app: the next message opens automatically and real photos are attached. Computer: tap "Next" at the bottom; the product photo is copied automatically — in WhatsApp press Ctrl+V, then Enter.</p>
+          <p className="text-xs text-slate-500">Active products are sent to customers; Discontinued ones are not. The WhatsApp icon on each lead shows ✓ when all active products are sent, or the number still pending — clicking sends only those. Every product goes as its own message: Welcome → Product 1 (photo + details) → Product 2 … → links. WhatsApp opens this customer's chat with the message typed in; you press Send. Android app: the next message opens automatically and real photos are attached. Computer: tap "Next" at the bottom; the product photo is copied automatically — in WhatsApp press Ctrl+V, then Enter.</p>
           {products.length === 0 && <div className="text-sm text-slate-400 text-center py-6 border border-dashed border-slate-200 rounded-xl">No products yet. Click "Add Product" to create your catalogue.</div>}
           <div className="space-y-2">
             {products.map(p => (
@@ -1877,10 +1899,15 @@
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-slate-800 truncate">{p.name}</p>
                   <p className="text-sm text-indigo-600 font-semibold">{fmtPrice(p.price) || '—'} <span className="text-xs text-slate-400 font-normal ml-1">{p.images.length} photo{p.images.length === 1 ? '' : 's'}</span></p>
-                  {!p.active && <span className="inline-block mt-0.5 text-[10px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Not sent</span>}
+                  {p.active
+                    ? <span className="inline-block mt-0.5 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">Active</span>
+                    : <span className="inline-block mt-0.5 text-[10px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Discontinued</span>}
                 </div>
-                <button onClick={() => setEditing(p)} aria-label="Edit product" className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
-                <button onClick={() => onDeleteProduct(p)} aria-label="Delete product" className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                <div className="flex flex-col sm:flex-row gap-1 shrink-0">
+                  <button onClick={() => setEditing(p)} title="Modify" className="px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 rounded-lg inline-flex items-center gap-1"><Edit2 className="w-3.5 h-3.5" />Modify</button>
+                  <button onClick={() => onToggleProduct(p)} title={p.active ? 'Stop sending this product' : 'Send this product again'} className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg ${p.active ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'}`}>{p.active ? 'Discontinue' : 'Activate'}</button>
+                </div>
+                <button onClick={() => onDeleteProduct(p)} title="Remove" className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
           </div>
@@ -1889,7 +1916,7 @@
       );
     }
 
-    function SettingsModal({ categories, references, waSettings, onSaveWa, products, onSaveProduct, onDeleteProduct, onClose, onAddCategory, onDeleteCategory, onAddReference, onDeleteReference }) {
+    function SettingsModal({ categories, references, waSettings, onSaveWa, products, onSaveProduct, onDeleteProduct, onToggleProduct, onClose, onAddCategory, onDeleteCategory, onAddReference, onDeleteReference }) {
       const [newCat, setNewCat] = useState(''); const [newRef, setNewRef] = useState('');
       const [wa, setWa] = useState(() => normalizeWaSettings(waSettings));
       const inp = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
@@ -1943,7 +1970,7 @@
                 </div>
                 <div className="flex justify-end"><Button onClick={() => onSaveWa(wa)}>Save Settings</Button></div>
               </div>
-              <ProductCatalogueSection products={products} onSaveProduct={onSaveProduct} onDeleteProduct={onDeleteProduct} />
+              <ProductCatalogueSection products={products} onSaveProduct={onSaveProduct} onDeleteProduct={onDeleteProduct} onToggleProduct={onToggleProduct} />
             </div>
           </div>
         </div>
@@ -1965,6 +1992,24 @@
       const [notifs, setNotifs] = useState([]);
       const [waStatus, setWaStatus] = useState(null);
       const [webSeq, setWebSeq] = useState(null);
+      const [sends, setSends] = useState({});
+      const loadSends = async () => {
+        const { data, error } = await sb.from('lead_sends').select('lead_id,item,sent_at');
+        if (error || !data) return;
+        const map = {};
+        data.forEach(r => { (map[r.lead_id] = map[r.lead_id] || {})[r.item] = r.sent_at; });
+        setSends(map);
+      };
+      useEffect(() => {
+        const h = async (e) => {
+          const { leadId, item } = e.detail;
+          const now = new Date().toISOString();
+          setSends(prev => ({ ...prev, [leadId]: { ...(prev[leadId] || {}), [item]: now } }));
+          await sb.from('lead_sends').upsert({ lead_id: leadId, item, sent_at: now, sent_by: meRef.current ? meRef.current.id : null });
+        };
+        window.addEventListener('lm-wa-sent', h);
+        return () => window.removeEventListener('lm-wa-sent', h);
+      }, []);
       useEffect(() => {
         const h = (e) => setWebSeq({ ...e.detail, index: 1 });
         window.addEventListener('lm-wa-steps', h);
@@ -1981,6 +2026,7 @@
           if (type === 'waProgress') setWaStatus({ title: 'Getting WhatsApp messages ready…', detail: payload });
           else if (type === 'waStep' || type === 'waNext') {
             const [i, n] = String(payload).split('/');
+            if (type === 'waStep' && window.__lmWaPlan) { const st = window.__lmWaPlan.steps[Number(i) - 1]; if (st) markSent(window.__lmWaPlan.leadId, st.item); }
             setWaStatus(type === 'waStep'
               ? { title: 'WhatsApp message ' + i + ' of ' + n, detail: 'Press Send in WhatsApp. The next one opens automatically.' }
               : { title: 'Sent ' + i + ' of ' + n, detail: 'Opening the next message…' });
@@ -2032,6 +2078,7 @@
         setLeads(L.sort((a, b) => b.id - a.id)); setTasks(T.sort((a, b) => String(b.id).localeCompare(String(a.id))));
         setCategories(cat); setReferences(ref); setWaSettings(waObj);
         loadProducts();
+        loadSends();
         setCurrentUser(profileToUser(me)); setCurrentView('dashboard'); setLoaded(true);
         return profileToUser(me);
       };
@@ -2093,6 +2140,7 @@
             else if (key === 'whatsapp') setWaSettings(value);
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => { loadProducts(); })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'lead_sends' }, () => { loadSends(); })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
             const { data } = await sb.from('profiles').select('*');
             if (data) setUsers(data.map(profileToUser));
@@ -2464,6 +2512,12 @@
           throw err;
         }
       };
+      const handleToggleProduct = async (p) => {
+        const { error } = await sb.from('products').update({ active: !p.active }).eq('id', p.id);
+        if (error) { showToast('Could not update: ' + error.message, 'error'); return; }
+        setProducts(prev => prev.map(x => x.id === p.id ? { ...x, active: !p.active } : x));
+        showToast(p.active ? '"' + p.name + '" discontinued — it will not be sent any more.' : '"' + p.name + '" is active again.', 'success');
+      };
       const handleDeleteProduct = async (p) => {
         if (!window.confirm('Delete "' + p.name + '" and its photos?')) return;
         const { error } = await sb.from('products').delete().eq('id', p.id);
@@ -2551,7 +2605,7 @@
             {currentView === 'dashboard' ? (
               <div className="max-w-7xl mx-auto"><div className="mb-8"><h2 className="text-2xl font-bold text-slate-800">Dashboard Overview</h2><p className="text-slate-500 mt-1">Track your campaign progress and conversion rates.</p></div><DashboardView leads={leads} currentUser={currentUser} /></div>
             ) : currentView === 'leads' ? (
-              <div className="max-w-7xl mx-auto h-full"><LeadsManagerView waSettings={waSettings} products={products} showToast={showToast} leads={leads} categories={categories} references={references} onAdd={handleAddLead} onUpdate={handleUpdateLead} onBulkUpdate={handleBulkUpdateLeads} onDelete={handleDeleteLead} currentUser={currentUser} users={users} /></div>
+              <div className="max-w-7xl mx-auto h-full"><LeadsManagerView waSettings={waSettings} products={products} sends={sends} showToast={showToast} leads={leads} categories={categories} references={references} onAdd={handleAddLead} onUpdate={handleUpdateLead} onBulkUpdate={handleBulkUpdateLeads} onDelete={handleDeleteLead} currentUser={currentUser} users={users} /></div>
             ) : currentView === 'users' && isAdmin ? (
               <div className="max-w-7xl mx-auto h-full"><UserManagementView users={users} categories={categories} references={references} onAddUser={handleAddUser} onUpdateUser={handleUpdateUser} onDeleteUser={handleDeleteUser} showToast={showToast} currentUser={currentUser} /></div>
             ) : currentView === 'tasks' ? (
@@ -2562,7 +2616,7 @@
               <div className="max-w-7xl mx-auto h-full"><BackupView leads={leads} users={users} categories={categories} references={references} tasks={tasks} onImport={handleImportLeads} showToast={showToast} currentUser={currentUser} /></div>
             ) : null}
           </div>
-          {isSettingsOpen && isAdmin && (<SettingsModal categories={categories} references={references} waSettings={waSettings} onSaveWa={handleSaveWa} products={products} onSaveProduct={handleSaveProduct} onDeleteProduct={handleDeleteProduct} onClose={() => setIsSettingsOpen(false)} onAddCategory={handleAddCategory} onDeleteCategory={handleDeleteCategory} onAddReference={handleAddReference} onDeleteReference={handleDeleteReference} />)}
+          {isSettingsOpen && isAdmin && (<SettingsModal categories={categories} references={references} waSettings={waSettings} onSaveWa={handleSaveWa} products={products} onSaveProduct={handleSaveProduct} onDeleteProduct={handleDeleteProduct} onToggleProduct={handleToggleProduct} onClose={() => setIsSettingsOpen(false)} onAddCategory={handleAddCategory} onDeleteCategory={handleDeleteCategory} onAddReference={handleAddReference} onDeleteReference={handleDeleteReference} />)}
         </div>
       );
     }
