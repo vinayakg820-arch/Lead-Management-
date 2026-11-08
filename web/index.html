@@ -2003,6 +2003,54 @@
       const [waStatus, setWaStatus] = useState(null);
       const [webSeq, setWebSeq] = useState(null);
       const [installEvt, setInstallEvt] = useState(null);
+      const [pull, setPull] = useState(0);
+      const [refreshing, setRefreshing] = useState(false);
+      const refreshAll = async () => {
+        setRefreshing(true);
+        try {
+          const { data } = await sb.auth.getSession();
+          if (data && data.session) await loadAll(data.session.user, true);
+        } catch (e) {}
+        if (window.__lmCheckUpdateNow) window.__lmCheckUpdateNow();
+        setRefreshing(false);
+        showToast('Refreshed • Version ' + APP_VERSION, 'success');
+      };
+      const refreshRef = useRef(refreshAll);
+      refreshRef.current = refreshAll;
+      useEffect(() => {
+        const standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+        if (!loaded || !(isNativeApp() || standalone)) return;
+        const LIMIT = 80;
+        let startY = null, dist = 0;
+        const atTop = (el) => {
+          if (window.scrollY > 0) return false;
+          for (let n = el; n && n !== document.body; n = n.parentElement) if (n.scrollTop > 0) return false;
+          return true;
+        };
+        const onStart = (e) => {
+          if (e.touches.length !== 1 || e.target.closest('.fixed') || !atTop(e.target)) { startY = null; return; }
+          startY = e.touches[0].clientY; dist = 0;
+        };
+        const onMove = (e) => {
+          if (startY === null) return;
+          dist = Math.max(0, e.touches[0].clientY - startY);
+          if (dist > 0 && window.scrollY === 0) { setPull(Math.min(dist / 2, LIMIT)); if (e.cancelable && dist > 10) e.preventDefault(); }
+        };
+        const onEnd = () => {
+          if (startY === null) return;
+          const go = dist / 2 >= LIMIT * 0.8;
+          startY = null; dist = 0; setPull(0);
+          if (go) refreshRef.current();
+        };
+        document.addEventListener('touchstart', onStart, { passive: true });
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+        document.addEventListener('touchcancel', onEnd);
+        return () => {
+          document.removeEventListener('touchstart', onStart); document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onEnd); document.removeEventListener('touchcancel', onEnd);
+        };
+      }, [loaded]);
       useEffect(() => {
         if (isNativeApp()) return;
         if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -2076,7 +2124,7 @@
       };
 
       // ---- Load everything from Supabase ----
-      const loadAll = async (authUser) => {
+      const loadAll = async (authUser, keepView = false) => {
         const [p, l, t, s] = await Promise.all([
           sb.from('profiles').select('*'), sb.from('leads').select('*'),
           sb.from('tasks').select('*'), sb.from('settings').select('*')
@@ -2100,7 +2148,7 @@
         setCategories(cat); setReferences(ref); setWaSettings(waObj);
         loadProducts();
         loadSends();
-        setCurrentUser(profileToUser(me)); setCurrentView('dashboard'); setLoaded(true);
+        setCurrentUser(profileToUser(me)); if (!keepView) setCurrentView('dashboard'); setLoaded(true);
         return profileToUser(me);
       };
 
@@ -2568,6 +2616,13 @@
           <NotificationStack items={notifs} onClose={(id) => setNotifs(prev => prev.filter(x => x.id !== id))} onOpen={(n) => { setNotifs(prev => prev.filter(x => x.id !== n.id)); setCurrentView('leads'); }} />
           {updateInfo && !congrats && <UpdateModal info={updateInfo} busy={updating} onUpdate={handleUpdateNow} onLater={handleUpdateLater} />}
           {congrats && <CongratsModal version={congrats.version} notes={congrats.notes} onClose={() => setCongrats(null)} />}
+          {(pull > 0 || refreshing) && (
+            <div className="fixed left-1/2 z-[97] -translate-x-1/2 pointer-events-none" style={{ top: 'calc(env(safe-area-inset-top) + ' + (refreshing ? 64 : 8 + pull * 0.7) + 'px)' }}>
+              <div className="w-10 h-10 rounded-full bg-white shadow-lg border border-slate-200 flex items-center justify-center">
+                <svg className={'w-5 h-5 text-indigo-600 ' + (refreshing ? 'animate-spin' : '')} style={refreshing ? {} : { transform: 'rotate(' + (pull * 4) + 'deg)', opacity: Math.min(1, pull / 60) }} fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
+              </div>
+            </div>
+          )}
           {webSeq && <WebStepsBar seq={webSeq} onNext={openNextWebStep} onStop={() => setWebSeq(null)} />}
           {waStatus && <WaProgressCard status={waStatus} onStop={() => { try { window.AndroidBridge.cancelWhatsAppSequence(); } catch (e) {} setWaStatus(null); }} />}
         </>
