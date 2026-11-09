@@ -209,7 +209,7 @@
     // Phones check this website (EdgeOne) for a newer version: upload a new ZIP there → "Update Now" pop-up in the app
     const DEFAULT_SITE_URL = 'https://leadmanagementcharvicomputers.edgeone.dev/';
     // Lowest Android app (native) version this web code needs; raise it together with NATIVE_VERSION in MainActivity.java
-    const MIN_NATIVE_VERSION = 5;
+    const MIN_NATIVE_VERSION = 6;
     // Filled in by the GitHub build with the commit message; shown as "What's new"
     const RELEASE_NOTES_RAW = "__RELEASE_NOTES__";
     const RELEASE_NOTES = RELEASE_NOTES_RAW.indexOf('__REL') === 0 ? '' : RELEASE_NOTES_RAW;
@@ -1940,7 +1940,7 @@
             </div>
             <div className="p-5">
               {info.notes ? <div className="text-sm text-slate-600 bg-slate-50 rounded-lg p-3 mb-4 whitespace-pre-line max-h-40 overflow-y-auto"><p className="font-semibold text-slate-700 mb-1">What's new</p>{info.notes}</div> : null}
-              {info.needsApk ? <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2.5 mb-4">This update installs a new app version. Android will ask you to confirm "Install".</p> : null}
+              {info.needsApk ? <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2.5 mb-4">This update needs the new app: it will download in your browser — open the downloaded file and tap Install.</p> : null}
               <button disabled={busy} onClick={onUpdate} className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-500/30 disabled:opacity-60">{busy ? 'Updating…' : 'Update Now'}</button>
               <button disabled={busy} onClick={onLater} className="w-full py-2.5 mt-2 rounded-xl text-slate-500 font-medium hover:bg-slate-50">Later</button>
             </div>

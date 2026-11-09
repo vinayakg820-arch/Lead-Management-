@@ -13,7 +13,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.provider.Settings;
 import android.speech.RecognizerIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
@@ -81,7 +80,7 @@ public class MainActivity extends Activity {
     /** Increase by 1 whenever this Java code / AndroidManifest changes. The GitHub build publishes it in
      *  update.json; if a newer release has a higher number the app downloads the new APK, otherwise it only
      *  downloads the new web app (instant update, no reinstall). */
-    public static final int NATIVE_VERSION = 5;
+    public static final int NATIVE_VERSION = 6;
     private static final String UPDATE_URL =
             "https://github.com/vinayakg820-arch/Lead-Management-/releases/latest/download/update.json";
     private static final String CHANNEL_ID = "lead_alerts";
@@ -649,40 +648,19 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void installApkUpdate(String apkUrl) {
-        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
-            sendToJs("updateError", "Please allow LeadMaster to install updates (turn the switch ON), come back and tap Update Now again.");
-            mainHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
-                    } catch (Exception ignored) {
-                    }
-                }
-            });
-            return;
-        }
-        sendToJs("updateProgress", "Downloading the new app version…");
-        File dir = new File(getCacheDir(), "shared");
-        if (!dir.exists()) dir.mkdirs();
-        File apk = new File(dir, "LeadMaster-update.apk");
-        if (apk.exists()) apk.delete();
-        if (!download(apkUrl, apk)) {
-            sendToJs("updateError", "Download failed. Check your internet and try again.");
-            return;
-        }
-        final Intent install = new Intent(Intent.ACTION_VIEW);
-        install.setDataAndType(FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apk),
-                "application/vnd.android.package-archive");
-        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+    /** A new APK is opened in the browser to download; the user installs it from there.
+     *  (The app itself no longer installs APKs, so it does not need the "install other apps" permission.) */
+    private void installApkUpdate(final String apkUrl) {
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
                 try {
-                    startActivity(install);
+                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                    sendToJs("updateError", "The new app is downloading in your browser. When it finishes, open it and tap Install.");
                 } catch (Exception e) {
-                    sendToJs("updateError", "Could not open the installer: " + e.getMessage());
+                    sendToJs("updateError", "Could not open the download: " + e.getMessage());
                 }
             }
         });
