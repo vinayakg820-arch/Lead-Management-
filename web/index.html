@@ -209,7 +209,7 @@
     // Phones check this website (EdgeOne) for a newer version: upload a new ZIP there → "Update Now" pop-up in the app
     const DEFAULT_SITE_URL = 'https://leadmanagementcharvicomputers.edgeone.dev/';
     // Lowest Android app (native) version this web code needs; raise it together with NATIVE_VERSION in MainActivity.java
-    const MIN_NATIVE_VERSION = 3;
+    const MIN_NATIVE_VERSION = 5;
     // Filled in by the GitHub build with the commit message; shown as "What's new"
     const RELEASE_NOTES_RAW = "__RELEASE_NOTES__";
     const RELEASE_NOTES = RELEASE_NOTES_RAW.indexOf('__REL') === 0 ? '' : RELEASE_NOTES_RAW;
@@ -957,7 +957,7 @@
                     <Select label="Reference" name="reference" value={formData.reference} onChange={handleChange} options={references} />
                     <Select label="Call Status" name="callStatus" value={formData.callStatus} onChange={handleChange} options={['Pending', 'Made Call', 'Not Received', 'Not Reachable']} />
                     {formData.callStatus === 'Made Call' && (
-                      <div><label className="block text-sm font-medium text-slate-700 mb-1">What discussed on Call</label><textarea name="callNotes" rows="3" value={formData.callNotes || ''} onChange={handleChange} placeholder="Briefly describe the call..." className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" /></div>
+                      <div><div className="flex items-center justify-between gap-2 mb-1 flex-wrap"><label className="text-sm font-medium text-slate-700">What discussed on Call</label><MicButton onText={(t) => setFormData(f => ({ ...f, callNotes: appendText(f.callNotes, t) }))} /></div><textarea name="callNotes" rows="3" value={formData.callNotes || ''} onChange={handleChange} placeholder="Briefly describe the call..." className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" /></div>
                     )}
                     <Select label="Visited Status" name="visitedStatus" value={formData.visitedStatus} onChange={handleChange} options={['Not Visited', 'Visited']} />
                     {formData.visitedStatus === 'Not Visited' && (
@@ -1145,7 +1145,43 @@
       );
     }
 
-    function CallNotesSheet({ lead, onSave, onClose }) {
+    // Free voice typing: Android app → Google voice typing; Chrome on computer → built-in speech recognition
+    const SPEECH_LANGS = [['mr-IN', 'मराठी'], ['hi-IN', 'हिंदी'], ['en-IN', 'English']];
+    const startVoiceTyping = (lang, onText, onDone, toast) => {
+      if (window.AndroidBridge && window.AndroidBridge.startSpeech) {
+        window.__lmSpeechCb = (type, text) => { window.__lmSpeechCb = null; if (type === 'speech' && text) onText(text); else if (text && toast) toast(text, 'error'); onDone(); };
+        window.AndroidBridge.startSpeech(lang);
+        return;
+      }
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR || isNativeApp()) { if (toast) toast('Use the 🎤 on your keyboard to speak (or update the app).', 'error'); onDone(); return; }
+      const r = new SR();
+      r.lang = lang; r.interimResults = false; r.maxAlternatives = 1;
+      r.onresult = (e) => { const t = e.results[0] && e.results[0][0] ? e.results[0][0].transcript : ''; if (t) onText(t); };
+      r.onerror = (e) => { if (toast && e.error !== 'no-speech' && e.error !== 'aborted') toast('Mic error: ' + e.error, 'error'); };
+      r.onend = onDone;
+      try { r.start(); } catch (e) { onDone(); }
+    };
+    function MicButton({ onText, toast }) {
+      const [lang, setLang] = useState(() => lsGet('lm_speech_lang') || 'mr-IN');
+      const [listening, setListening] = useState(false);
+      const pick = (l) => { setLang(l); lsSet('lm_speech_lang', l); };
+      const go = () => { if (listening) return; setListening(true); startVoiceTyping(lang, onText, () => setListening(false), toast); };
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button type="button" onClick={go} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold text-white ${listening ? 'bg-rose-500 animate-pulse' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 17v5" /></svg>
+            {listening ? 'ऐकतोय…' : 'बोलून लिहा'}
+          </button>
+          {SPEECH_LANGS.map(([code, label]) => (
+            <button type="button" key={code} onClick={() => pick(code)} className={`px-2 py-1 rounded-full text-[11px] font-medium border ${lang === code ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'border-slate-200 text-slate-500'}`}>{label}</button>
+          ))}
+        </div>
+      );
+    }
+    const appendText = (prev, t) => (prev && prev.trim() ? prev.trim() + ' ' : '') + t.trim();
+
+    function CallNotesSheet({ lead, onSave, onClose, toast }) {
       const [note, setNote] = useState('');
       const [status, setStatus] = useState('Made Call');
       const opts = [['Made Call', '✅ Call झाला'], ['Not Received', '📵 उचलला नाही'], ['Not Reachable', '🚫 Not reachable']];
@@ -1165,8 +1201,9 @@
               {status === 'Made Call' && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">काय बोललात? (What discussed)</label>
-                  <textarea autoFocus rows="4" value={note} onChange={e => setNote(e.target.value)} placeholder="उदा. Laptop i5 हवा आहे, बजेट 25000, शनिवारी shop ला येणार" className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                  <p className="text-[11px] text-slate-400 mt-1">🎤 Keyboard वरच्या mic ने मराठी / हिंदी / English मध्ये बोलूनही लिहिता येईल.</p>
+                  <div className="mb-2"><MicButton toast={toast} onText={(t) => setNote(n => appendText(n, t))} /></div>
+                  <textarea rows="4" value={note} onChange={e => setNote(e.target.value)} placeholder="उदा. Laptop i5 हवा आहे, बजेट 25000, शनिवारी shop ला येणार" className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <p className="text-[11px] text-slate-400 mt-1">"बोलून लिहा" दाबा आणि मराठी / हिंदी / English मध्ये सांगा — free, कोणताही खर्च नाही.</p>
                 </div>
               )}
               <div className="flex gap-2 pt-1">
@@ -1420,7 +1457,7 @@
           {isFormOpen && <LeadFormModal lead={editingLead} leads={leads} categories={categories} references={references} onClose={() => setIsFormOpen(false)} onSave={handleSave} />}
           {isBulkAssignOpen && <BulkAssignModal leads={leads} users={users} onClose={() => setIsBulkAssignOpen(false)} onSave={(updatedLeads) => { onBulkUpdate(updatedLeads); setIsBulkAssignOpen(false); }} />}
           {viewingLead && <LeadViewModal lead={viewingLead} onClose={() => setViewingLead(null)} />}
-          {callLead && <CallNotesSheet lead={callLead} onSave={saveCallNotes} onClose={() => setCallLead(null)} />}
+          {callLead && <CallNotesSheet lead={callLead} toast={showToast} onSave={saveCallNotes} onClose={() => setCallLead(null)} />}
           {assigningLead && <AssignLeadModal lead={assigningLead} users={users} onClose={() => setAssigningLead(null)} onSave={handleAssignSave} />}
         </div>
       );
@@ -2223,6 +2260,8 @@
             setWaStatus(type === 'waStep'
               ? { title: 'WhatsApp message ' + i + ' of ' + n, detail: 'Press Send in WhatsApp. The next one opens automatically.' }
               : { title: 'Sent ' + i + ' of ' + n, detail: 'Opening the next message…' });
+          } else if (type === 'speech' || type === 'speechError') {
+            if (window.__lmSpeechCb) window.__lmSpeechCb(type, payload);
           } else if (type === 'waDone') {
             setWaStatus(null);
             if (payload === 'done') showToast('All WhatsApp messages are done.', 'success');

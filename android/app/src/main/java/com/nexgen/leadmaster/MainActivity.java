@@ -14,6 +14,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.provider.Settings;
+import android.speech.RecognizerIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ContentValues;
@@ -75,11 +76,12 @@ public class MainActivity extends Activity {
     private static final String START_URL = "https://" + APP_HOST + "/assets/index.html";
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int MAX_PHOTOS = 30;
+    private static final int SPEECH_REQUEST = 4001;
 
     /** Increase by 1 whenever this Java code / AndroidManifest changes. The GitHub build publishes it in
      *  update.json; if a newer release has a higher number the app downloads the new APK, otherwise it only
      *  downloads the new web app (instant update, no reinstall). */
-    public static final int NATIVE_VERSION = 4;
+    public static final int NATIVE_VERSION = 5;
     private static final String UPDATE_URL =
             "https://github.com/vinayakg820-arch/Lead-Management-/releases/latest/download/update.json";
     private static final String CHANNEL_ID = "lead_alerts";
@@ -192,6 +194,12 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == SPEECH_REQUEST) {
+            ArrayList<String> results = (resultCode == RESULT_OK && data != null) ? data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) : null;
+            if (results != null && !results.isEmpty()) sendToJs("speech", results.get(0));
+            else sendToJs("speechError", "");
+            return;
+        }
         if (requestCode == FILE_CHOOSER_REQUEST) {
             Uri[] result = null;
             if (resultCode == RESULT_OK && data != null) {
@@ -277,6 +285,27 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public int nativeVersion() { return NATIVE_VERSION; }
+
+        /** Free Google voice typing: lang = mr-IN, hi-IN or en-IN. Result comes back as __lmNative('speech', text). */
+        @JavascriptInterface
+        public void startSpeech(final String lang) {
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                    i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                    String l = lang == null || lang.isEmpty() ? "mr-IN" : lang;
+                    i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, l);
+                    i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, l);
+                    i.putExtra(RecognizerIntent.EXTRA_PROMPT, "mr-IN".equals(l) ? "बोला…" : "hi-IN".equals(l) ? "बोलिए…" : "Speak now…");
+                    try {
+                        startActivityForResult(i, SPEECH_REQUEST);
+                    } catch (ActivityNotFoundException e) {
+                        sendToJs("speechError", "Google voice typing is not available on this phone. Use the keyboard mic.");
+                    }
+                }
+            });
+        }
 
         @JavascriptInterface
         public void sendWhatsAppSequence(final String phone, final String stepsJson, final String appPref) {

@@ -17,6 +17,9 @@
             <action android:name="android.intent.action.DIAL" />
         </intent>
         <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.GET_CONTENT" />
             <data android:mimeType="*/*" />
         </intent>
