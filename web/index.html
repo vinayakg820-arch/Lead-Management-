@@ -864,7 +864,7 @@
                 {lead.callStatus === 'Made Call' && lead.callNotes && (
                   <div className="sm:col-span-2 mt-2 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                     <p className="text-xs font-bold text-blue-800 uppercase tracking-wider mb-1">What Discussed on Call</p>
-                    <p className="text-sm font-medium text-blue-900">{lead.callNotes}</p>
+                    <p className="text-sm font-medium text-blue-900 whitespace-pre-line">{lead.callNotes}</p>
                   </div>
                 )}
                 
@@ -957,7 +957,7 @@
                     <Select label="Reference" name="reference" value={formData.reference} onChange={handleChange} options={references} />
                     <Select label="Call Status" name="callStatus" value={formData.callStatus} onChange={handleChange} options={['Pending', 'Made Call', 'Not Received', 'Not Reachable']} />
                     {formData.callStatus === 'Made Call' && (
-                      <Input label="What discussed on Call" name="callNotes" value={formData.callNotes || ''} onChange={handleChange} placeholder="Briefly describe the call..." />
+                      <div><label className="block text-sm font-medium text-slate-700 mb-1">What discussed on Call</label><textarea name="callNotes" rows="3" value={formData.callNotes || ''} onChange={handleChange} placeholder="Briefly describe the call..." className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" /></div>
                     )}
                     <Select label="Visited Status" name="visitedStatus" value={formData.visitedStatus} onChange={handleChange} options={['Not Visited', 'Visited']} />
                     {formData.visitedStatus === 'Not Visited' && (
@@ -1145,12 +1145,78 @@
       );
     }
 
+    function CallNotesSheet({ lead, onSave, onClose }) {
+      const [note, setNote] = useState('');
+      const [status, setStatus] = useState('Made Call');
+      const opts = [['Made Call', '✅ Call झाला'], ['Not Received', '📵 उचलला नाही'], ['Not Reachable', '🚫 Not reachable']];
+      return (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[80] flex items-end sm:items-center justify-center">
+          <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl animate-slide-up" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div><p className="font-semibold text-slate-800">📞 {lead.name} — call कसा झाला?</p><p className="text-xs text-slate-500">{lead.phone}</p></div>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                {opts.map(([v, l]) => (
+                  <button key={v} onClick={() => setStatus(v)} className={`py-2 px-1 rounded-lg text-xs font-semibold border ${status === v ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}`}>{l}</button>
+                ))}
+              </div>
+              {status === 'Made Call' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">काय बोललात? (What discussed)</label>
+                  <textarea autoFocus rows="4" value={note} onChange={e => setNote(e.target.value)} placeholder="उदा. Laptop i5 हवा आहे, बजेट 25000, शनिवारी shop ला येणार" className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <p className="text-[11px] text-slate-400 mt-1">🎤 Keyboard वरच्या mic ने मराठी / हिंदी / English मध्ये बोलूनही लिहिता येईल.</p>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-medium text-sm">Skip</button>
+                <button onClick={() => onSave(status, note.trim())} className="flex-[2] py-2.5 rounded-xl bg-indigo-600 text-white font-semibold text-sm">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function LeadsManagerView({ waSettings, products, sends, showToast, leads, categories, references, onAdd, onUpdate, onBulkUpdate, onDelete, currentUser, users }) {
       const isAdmin = currentUser.role === 'admin';
       const [isFormOpen, setIsFormOpen] = useState(false); 
       const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
       const [editingLead, setEditingLead] = useState(null);
       const [viewingLead, setViewingLead] = useState(null); 
+      // Call button: mark "Made Call" at once; when the user comes back from the phone call, ask what was discussed
+      const [callLead, setCallLead] = useState(null);
+      const pendingCallRef = useRef(null);
+      const leadsRef = useRef(leads);
+      leadsRef.current = leads;
+      const latestLead = (id) => leadsRef.current.find(l => String(l.id) === String(id));
+      const startCall = (lead) => {
+        onUpdate({ ...lead, callStatus: 'Made Call', lastCallAt: new Date().toISOString() });
+        pendingCallRef.current = { id: lead.id, left: false };
+      };
+      useEffect(() => {
+        const onVis = () => {
+          const pc = pendingCallRef.current;
+          if (!pc) return;
+          if (document.hidden) { pc.left = true; return; }
+          if (pc.left) { pendingCallRef.current = null; const l = latestLead(pc.id); if (l) setCallLead(l); }
+        };
+        const onBlur = () => { if (pendingCallRef.current) pendingCallRef.current.left = true; };
+        const onFocus = () => { setTimeout(() => { if (!document.hidden) onVis(); }, 300); };
+        document.addEventListener('visibilitychange', onVis);
+        window.addEventListener('blur', onBlur);
+        window.addEventListener('focus', onFocus);
+        return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('blur', onBlur); window.removeEventListener('focus', onFocus); };
+      }, []);
+      const saveCallNotes = (status, note) => {
+        const lead = latestLead(callLead.id) || callLead;
+        const stamp = new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const notes = status === 'Made Call' && note ? (stamp + ': ' + note + (lead.callNotes ? '\n' + lead.callNotes : '')) : (lead.callNotes || '');
+        onUpdate({ ...lead, callStatus: status, callNotes: notes });
+        setCallLead(null);
+        showToast(status === 'Made Call' ? 'Call saved' + (note ? ' with notes' : '') : 'Saved: ' + status, 'success');
+      };
       const [assigningLead, setAssigningLead] = useState(null);
       const [searchTerm, setSearchTerm] = useState('');
       const [filterStatus, setFilterStatus] = useState('All');
@@ -1298,7 +1364,7 @@
                     {isAdmin && <div className="mt-3 text-xs text-indigo-700 font-medium bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 flex items-center"><UserPlus className="w-3 h-3 mr-1.5" />{users.find(u => u.id === lead.assignedTo)?.name || 'Unassigned'}</div>}
                   </div>
                   <div className="flex border-t border-slate-100 bg-slate-50/70 divide-x divide-slate-100 text-sm font-medium">
-                    <a href={`tel:${lead.phone}`} className="flex-1 py-3 flex items-center justify-center text-emerald-600 active:bg-emerald-50"><Phone className="w-4 h-4 mr-1.5" />Call</a>
+                    <a href={`tel:${lead.phone}`} onClick={() => startCall(lead)} className="flex-1 py-3 flex items-center justify-center text-emerald-600 active:bg-emerald-50"><Phone className="w-4 h-4 mr-1.5" />Call</a>
                     <a href={buildWaLink(lead, waSettings, products)} onClick={sendWa(lead, waSettings, showToast, products, sends[String(lead.id)])} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 flex items-center justify-center text-green-600 active:bg-green-50"><span className="relative mr-1.5 inline-flex"><MsgIcon className="w-4 h-4" /><WaBadge wa={waSettings} products={products} sent={sends[String(lead.id)]} /></span>WhatsApp</a>
                     <button aria-label="View lead" onClick={() => setViewingLead(lead)} className="flex-1 py-3 flex items-center justify-center text-blue-600 active:bg-blue-50"><Eye className="w-4 h-4" /></button>
                     <button aria-label="Edit lead" onClick={() => {setEditingLead(lead); setIsFormOpen(true);}} className="flex-1 py-3 flex items-center justify-center text-indigo-600 active:bg-indigo-50"><Edit2 className="w-4 h-4" /></button>
@@ -1354,6 +1420,7 @@
           {isFormOpen && <LeadFormModal lead={editingLead} leads={leads} categories={categories} references={references} onClose={() => setIsFormOpen(false)} onSave={handleSave} />}
           {isBulkAssignOpen && <BulkAssignModal leads={leads} users={users} onClose={() => setIsBulkAssignOpen(false)} onSave={(updatedLeads) => { onBulkUpdate(updatedLeads); setIsBulkAssignOpen(false); }} />}
           {viewingLead && <LeadViewModal lead={viewingLead} onClose={() => setViewingLead(null)} />}
+          {callLead && <CallNotesSheet lead={callLead} onSave={saveCallNotes} onClose={() => setCallLead(null)} />}
           {assigningLead && <AssignLeadModal lead={assigningLead} users={users} onClose={() => setAssigningLead(null)} onSave={handleAssignSave} />}
         </div>
       );
@@ -1449,7 +1516,7 @@
       };
 
       return (
-        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
+        <div className="md:h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
           <div className="flex flex-wrap gap-3 justify-between items-center">
              <div><h2 className="text-xl font-bold text-slate-800">User Management</h2><p className="text-slate-500 text-sm">Manage team access and generate secure login cards.</p></div>
              <Button onClick={() => {setEditingUser(null); setIsModalOpen(true);}} icon={Plus}>Add New User</Button>
@@ -1632,7 +1699,7 @@
       };
 
       return (
-        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
+        <div className="md:h-[calc(100vh-6rem)] flex flex-col space-y-4 animate-slide-up">
           <div className="flex flex-wrap gap-3 justify-between items-center">
             <div>
                <h2 className="text-xl font-bold text-slate-800">Task Management</h2>
@@ -1725,7 +1792,7 @@
       const overallProd = totalAssigned > 0 ? Math.round((totalCompleted / totalAssigned) * 100) : 0;
 
       return (
-        <div className="h-[calc(100vh-6rem)] flex flex-col space-y-6 animate-slide-up">
+        <div className="md:h-[calc(100vh-6rem)] flex flex-col space-y-6 animate-slide-up">
           <div className="flex flex-wrap gap-3 justify-between items-center">
              <div>
                 <h2 className="text-xl font-bold text-slate-800">Productivity Analytics</h2>
